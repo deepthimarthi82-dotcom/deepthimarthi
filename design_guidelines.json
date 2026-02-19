@@ -1,0 +1,146 @@
+{
+  "identity": {
+    "name": "E1",
+    "role": "Anti-AI Creative Designer",
+    "mission": "Create a Neo-Brutalist Romance app that breaks the Tinder clone mold.",
+    "principles": [
+      "Fusion over Imitation: Mix Brutalism with Romantic Softness.",
+      "Emotion First: Every interaction must feel 'raw' and 'honest'.",
+      "Content is King: Profiles are stories, not stats.",
+      "Contrast: Hard black borders vs. soft human portraits."
+    ]
+  },
+  "design_system": {
+    "theme": "light",
+    "colors": {
+      "background": "#FDFBF7",
+      "foreground": "#050505",
+      "primary": "#FF2E63",
+      "primary_foreground": "#FFFFFF",
+      "secondary": "#252A34",
+      "secondary_foreground": "#FFFFFF",
+      "accent": "#CCFF00",
+      "accent_foreground": "#000000",
+      "muted": "#EAEAEA",
+      "muted_foreground": "#666666",
+      "border": "#000000",
+      "input": "#FFFFFF",
+      "ring": "#000000",
+      "destructive": "#FF0000",
+      "success": "#00CC66",
+      "warning": "#FFCC00"
+    },
+    "typography": {
+      "headings": {
+        "family": "Syne, sans-serif",
+        "weights": ["700", "800"],
+        "usage": "All major headings, hero text, and impact statements."
+      },
+      "body": {
+        "family": "DM Sans, sans-serif",
+        "weights": ["400", "500", "700"],
+        "usage": "Paragraphs, UI labels, inputs."
+      },
+      "mono": {
+        "family": "JetBrains Mono, monospace",
+        "usage": "Data points, timestamps, badges."
+      }
+    },
+    "spacing": {
+      "base": "0.25rem",
+      "scale": {
+        "container_padding": "p-6 md:p-12",
+        "section_gap": "gap-8 md:gap-16"
+      }
+    },
+    "borders": {
+      "width": "2px",
+      "radius": {
+        "default": "0px",
+        "button": "9999px",
+        "card": "12px",
+        "input": "8px"
+      },
+      "style": "solid"
+    },
+    "shadows": {
+      "hard": "4px 4px 0px 0px #000000",
+      "hard_hover": "2px 2px 0px 0px #000000",
+      "hard_active": "0px 0px 0px 0px #000000"
+    }
+  },
+  "visual_enhancers": {
+    "textures": "Use subtle grain overlays (opacity 0.03) on backgrounds to kill digital flatness.",
+    "decorations": [
+      "Marquee text for high-energy sections.",
+      "Brutalist stickers (stars, arrows) as absolute positioned elements.",
+      "Exposed grid lines in background sections."
+    ],
+    "animations": {
+      "hover": "translate-x-[-2px] translate-y-[-2px] shadow-[6px_6px_0px_0px_#000]",
+      "tap": "translate-x-[0px] translate-y-[0px] shadow-[0px_0px_0px_0px_#000]",
+      "page_transition": "Slide up with heavy easing."
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-white border-2 border-black shadow-[4px_4px_0px_0px_#000] hover:translate-y-[-2px] hover:shadow-[6px_6px_0px_0px_#000] active:translate-y-[0px] active:shadow-[0px_0px_0px_0px_#000] transition-all font-bold uppercase tracking-wide rounded-full px-8 py-4",
+      "secondary": "bg-white text-black border-2 border-black shadow-[4px_4px_0px_0px_#000] hover:bg-accent transition-all font-bold rounded-full px-8 py-4",
+      "ghost": "text-black hover:bg-muted font-bold uppercase tracking-wide"
+    },
+    "cards": {
+      "profile": "bg-white border-2 border-black shadow-[8px_8px_0px_0px_#000] rounded-xl overflow-hidden",
+      "feature": "bg-white border-2 border-black shadow-[4px_4px_0px_0px_#000] p-6 rounded-lg hover:bg-accent/20 transition-colors"
+    },
+    "inputs": {
+      "default": "bg-white border-2 border-black rounded-lg p-4 focus:ring-2 focus:ring-black focus:ring-offset-2 focus:outline-none font-medium placeholder:text-gray-400"
+    },
+    "badges": {
+      "default": "bg-black text-white px-3 py-1 rounded-full text-xs font-mono uppercase tracking-wider border border-black",
+      "outline": "bg-transparent text-black px-3 py-1 rounded-full text-xs font-mono uppercase tracking-wider border-2 border-black"
+    }
+  },
+  "layout_strategies": {
+    "landing": "Use 'Bento' grids with mixed aspect ratios. Hero section must be asymmetrical.",
+    "swipe_deck": "Stacked cards with slight rotation for depth. Background should have a subtle grid pattern.",
+    "profile_view": "Magazine style. Large typography for names. Photos take center stage with 'sticker' style details."
+  },
+  "assets": {
+    "fonts": [
+      "https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap"
+    ],
+    "images": {
+      "hero_bg": "https://images.unsplash.com/photo-1644300502181-66211901f482?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "profiles": [
+        "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.unsplash.com/photo-1679466061812-211a6b737175?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.unsplash.com/photo-1740989475605-355ada18c3fb?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.unsplash.com/photo-1760893107446-58b108d419d8?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.pexels.com/photos/6988726/pexels-photo-6988726.jpeg",
+        "https://images.pexels.com/photos/6217800/pexels-photo-6217800.jpeg"
+      ],
+      "dates": [
+        "https://images.unsplash.com/photo-1632643962762-097c26712031?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.unsplash.com/photo-1759651037868-eb8039c79ed1?crop=entropy&cs=srgb&fm=jpg&q=85",
+        "https://images.pexels.com/photos/7479755/pexels-photo-7479755.jpeg"
+      ]
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. INSTALL FONTS: Add the Google Fonts link to the <head> of index.html immediately.",
+    "2. CONFIGURE TAILWIND: Update tailwind.config.js with the colors, font families, and border radius defined in 'design_system'.",
+    "3. GLOBAL STYLES: In index.css, set the body background to #FDFBF7 and default text color to #050505. Add a utility class for '.neo-shadow' using the shadow values.",
+    "4. COMPONENT OVERRIDES: When using Shadcn components, STRIP their default subtle borders and replace them with 'border-2 border-black'.",
+    "5. DO NOT USE GRADIENTS: Stick to solid colors and hard borders. This is Neo-Brutalism.",
+    "6. USE 'SYNE' FOR HEADINGS: It gives the 'funky' vibe. Use 'DM Sans' for readability.",
+    "7. MOBILE FIRST: Ensure touch targets are large (min 44px). The swipe deck must be responsive.",
+    "8. DATA-TESTID: Add data-testid to all interactive elements (buttons, inputs, cards)."
+  ],
+  "universal_guidelines": [
+    "Avoid 'AI slop' aesthetics (generic centered layouts, soft blue gradients).",
+    "Use 2-3x more spacing than typical designs.",
+    "Every interaction needs micro-animations (hover, tap).",
+    "Never use transparent backgrounds for dropdowns or overlays without a solid backing or heavy blur.",
+    "Use 'sonner' for toasts."
+  ]
+}
