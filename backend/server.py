@@ -283,7 +283,12 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
         "profile_complete": True
     }
     
-    if looking_for != "everyone":
+    # Map looking_for to gender (women -> woman, men -> man)
+    if looking_for == "women":
+        query["gender"] = "woman"
+    elif looking_for == "men":
+        query["gender"] = "man"
+    elif looking_for != "everyone":
         query["gender"] = looking_for
     
     # Get potential matches
