@@ -1532,9 +1532,8 @@ const ChatPage = () => {
   const [showIcebreakers, setShowIcebreakers] = useState(false);
   const { token, user } = useAuth();
   const navigate = useNavigate();
-  const { matchId } = useLocation().pathname.split('/').pop() ? { matchId: useLocation().pathname.split('/').pop() } : {};
-
-  const matchIdFromUrl = window.location.pathname.split('/').pop();
+  const location = useLocation();
+  const matchIdFromUrl = location.pathname.split('/').pop();
 
   useEffect(() => {
     const fetchChat = async () => {
