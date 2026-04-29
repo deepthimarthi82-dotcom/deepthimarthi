@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deepthi Marthi | Amazon & Multi-Channel Marketplace Expert</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+--navy:#0B1D3A;
+--gold:#C9923A;
+--gold-light:#E8B96A;
+--cream:#FAF8F4;
+--text:#1A1A2E;
+--muted:#5A5A72;
+--white:#FFFFFF;
+--border:#E8E4DC;
+}
+body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--text);line-height:1.7}
+a{text-decoration:none;color:inherit}
+
+/* NAV */
+nav{background:var(--navy);padding:1.2rem 2rem;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+.nav-logo{font-family:'Playfair Display',serif;color:var(--white);font-size:1.2rem;letter-spacing:0.5px}
+.nav-links{display:flex;gap:2rem}
+.nav-links a{color:rgba(255,255,255,0.7);font-size:0.85rem;letter-spacing:1px;text-transform:uppercase;transition:color 0.2s}
+.nav-links a:hover{color:var(--gold-light)}
+
+/* HERO */
+.hero{background:var(--navy);padding:6rem 2rem 5rem;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse at 30% 50%, rgba(201,146,58,0.08) 0%, transparent 60%)}
+.hero-badge{display:inline-block;background:rgba(201,146,58,0.15);border:1px solid rgba(201,146,58,0.3);color:var(--gold-light);font-size:0.75rem;letter-spacing:2px;text-transform:uppercase;padding:0.4rem 1.2rem;border-radius:2rem;margin-bottom:1.5rem}
+.hero h1{font-family:'Playfair Display',serif;color:var(--white);font-size:clamp(2.5rem,5vw,4rem);font-weight:700;line-height:1.15;margin-bottom:1rem}
+.hero h1 span{color:var(--gold-light)}
+.hero-sub{color:rgba(255,255,255,0.6);font-size:1.1rem;max-width:600px;margin:0 auto 2.5rem;font-weight:300}
+.hero-stats{display:flex;justify-content:center;gap:3rem;margin-top:3rem;flex-wrap:wrap}
+.stat{text-align:center}
+.stat-num{font-family:'Playfair Display',serif;color:var(--gold-light);font-size:2.2rem;font-weight:700;display:block}
+.stat-label{color:rgba(255,255,255,0.5);font-size:0.8rem;letter-spacing:1px;text-transform:uppercase;margin-top:0.2rem}
+.hero-cta{display:inline-flex;align-items:center;gap:0.5rem;background:var(--gold);color:var(--navy);padding:0.85rem 2rem;border-radius:0.3rem;font-weight:500;font-size:0.95rem;transition:background 0.2s;margin-right:1rem}
+.hero-cta:hover{background:var(--gold-light)}
+.hero-cta-outline{display:inline-flex;align-items:center;gap:0.5rem;border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.8);padding:0.85rem 2rem;border-radius:0.3rem;font-size:0.95rem;transition:all 0.2s}
+.hero-cta-outline:hover{border-color:var(--gold-light);color:var(--gold-light)}
+
+/* SECTIONS */
+section{padding:5rem 2rem}
+.container{max-width:1100px;margin:0 auto}
+.section-label{font-size:0.75rem;letter-spacing:3px;text-transform:uppercase;color:var(--gold);font-weight:500;margin-bottom:0.75rem}
+.section-title{font-family:'Playfair Display',serif;font-size:clamp(1.8rem,3vw,2.5rem);color:var(--navy);margin-bottom:1rem;line-height:1.2}
+.section-desc{color:var(--muted);max-width:600px;font-size:1rem;margin-bottom:3rem}
+
+/* SERVICES */
+.services-bg{background:var(--white)}
+.services-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}
+.service-card{border:1px solid var(--border);border-radius:0.5rem;padding:2rem;transition:all 0.2s;position:relative;overflow:hidden}
+.service-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:0;background:var(--gold);transition:height 0.3s}
+.service-card:hover{border-color:var(--gold);transform:translateY(-3px)}
+.service-card:hover::before{height:100%}
+.service-icon{width:44px;height:44px;background:rgba(201,146,58,0.1);border-radius:0.4rem;display:flex;align-items:center;justify-content:center;margin-bottom:1.2rem}
+.service-icon svg{width:22px;height:22px;stroke:var(--gold);fill:none;stroke-width:1.5}
+.service-card h3{font-size:1.05rem;font-weight:500;color:var(--navy);margin-bottom:0.6rem}
+.service-card p{color:var(--muted);font-size:0.9rem;line-height:1.6}
+
+/* WHO I HELP */
+.who-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-top:2rem}
+.who-card{background:var(--navy);border-radius:0.5rem;padding:1.5rem;text-align:center}
+.who-card h4{color:var(--gold-light);font-size:0.95rem;margin-bottom:0.4rem;font-weight:500}
+.who-card p{color:rgba(255,255,255,0.5);font-size:0.82rem}
+
+/* PLATFORMS */
+.platforms{background:var(--white)}
+.platform-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem}
+.platform-pill{border:1px solid var(--border);border-radius:0.4rem;padding:1rem 1.2rem;text-align:center;font-size:0.9rem;font-weight:500;color:var(--navy);transition:all 0.2s}
+.platform-pill:hover{border-color:var(--gold);color:var(--gold);background:rgba(201,146,58,0.05)}
+
+/* RESULTS */
+.results-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.5rem}
+.result-card{background:var(--navy);border-radius:0.5rem;padding:2rem;position:relative;overflow:hidden}
+.result-card::after{content:'';position:absolute;bottom:0;right:0;width:80px;height:80px;background:rgba(201,146,58,0.06);border-radius:50%;transform:translate(20px,20px)}
+.result-num{font-family:'Playfair Display',serif;color:var(--gold-light);font-size:2.5rem;font-weight:700;display:block;margin-bottom:0.3rem}
+.result-desc{color:rgba(255,255,255,0.6);font-size:0.9rem;line-height:1.5}
+.result-company{color:rgba(255,255,255,0.3);font-size:0.78rem;text-transform:uppercase;letter-spacing:1px;margin-top:0.8rem}
+
+/* EXPERIENCE */
+.exp-bg{background:var(--white)}
+.timeline{position:relative;padding-left:1.5rem}
+.timeline::before{content:'';position:absolute;left:0;top:0;bottom:0;width:1px;background:var(--border)}
+.exp-item{position:relative;margin-bottom:2.5rem;padding-left:1.5rem}
+.exp-item::before{content:'';position:absolute;left:-1.9rem;top:0.4rem;width:8px;height:8px;border-radius:50%;background:var(--gold);border:2px solid var(--cream)}
+.exp-header{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.3rem}
+.exp-title{font-weight:500;color:var(--navy);font-size:1rem}
+.exp-date{color:var(--gold);font-size:0.82rem;background:rgba(201,146,58,0.1);padding:0.2rem 0.7rem;border-radius:2rem;white-space:nowrap}
+.exp-company{color:var(--muted);font-size:0.88rem;margin-bottom:0.5rem}
+.exp-bullets{color:var(--muted);font-size:0.88rem;padding-left:1rem}
+.exp-bullets li{margin-bottom:0.3rem;line-height:1.5}
+
+/* TOOLS */
+.tools-grid{display:flex;flex-wrap:wrap;gap:0.6rem}
+.tool-tag{background:rgba(201,146,58,0.08);border:1px solid rgba(201,146,58,0.2);color:var(--navy);font-size:0.82rem;padding:0.35rem 0.9rem;border-radius:2rem;font-weight:400}
+
+/* CERTS */
+.certs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}
+.cert-item{background:var(--white);border:1px solid var(--border);border-radius:0.5rem;padding:1rem 1.2rem;display:flex;align-items:center;gap:0.8rem}
+.cert-dot{width:8px;height:8px;background:var(--gold);border-radius:50%;flex-shrink:0}
+.cert-name{font-size:0.85rem;color:var(--navy);font-weight:400}
+
+/* CONTACT */
+.contact-bg{background:var(--navy)}
+.contact-bg .section-label{color:var(--gold-light)}
+.contact-bg .section-title{color:var(--white)}
+.contact-bg .section-desc{color:rgba(255,255,255,0.5)}
+.contact-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-top:2rem}
+.contact-item{border:1px solid rgba(255,255,255,0.1);border-radius:0.5rem;padding:1.2rem 1.5rem;transition:border-color 0.2s}
+.contact-item:hover{border-color:var(--gold)}
+.contact-label{color:rgba(255,255,255,0.4);font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;margin-bottom:0.3rem}
+.contact-val{color:var(--white);font-size:0.9rem}
+.contact-val a{color:var(--gold-light)}
+
+/* FOOTER */
+footer{background:#060F1E;padding:1.5rem 2rem;text-align:center;color:rgba(255,255,255,0.3);font-size:0.82rem}
+
+@media(max-width:600px){
+.hero-stats{gap:1.5rem}
+.nav-links{display:none}
+.hero-cta-outline{display:none}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">Deepthi Marthi</div>
+  <div class="nav-links">
+    <a href="#services">Services</a>
+    <a href="#results">Results</a>
+    <a href="#experience">Experience</a>
+    <a href="#contact">Contact</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">Amazon &amp; Multi-Channel Marketplace Expert</div>
+    <h1>I Help New &amp; Existing Brands <span>Launch, Grow &amp; Scale</span><br>on Amazon, Wayfair &amp; Walmart</h1>
+    <p class="hero-sub">With 12+ years of hands-on experience, I have built marketplace divisions from scratch and scaled existing brands across multi-channel environments, managing $50M+ GMV across 200+ brands. I also help brands source and identify trending white label products for marketplace expansion.</p>
+    <div>
+      <a href="#contact" class="hero-cta">Work With Me</a>
+      <a href="#results" class="hero-cta-outline">View Results</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">$50M+</span><span class="stat-label">GMV Managed</span></div>
+      <div class="stat"><span class="stat-num">200+</span><span class="stat-label">Brands Served</span></div>
+      <div class="stat"><span class="stat-num">12+</span><span class="stat-label">Years Experience</span></div>
+      <div class="stat"><span class="stat-num">8</span><span class="stat-label">Marketplaces</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- WHO I HELP -->
+<section style="background:var(--navy);padding:3rem 2rem">
+  <div class="container">
+    <p class="section-label" style="color:var(--gold-light)">Who I Work With</p>
+    <div class="who-grid">
+      <div class="who-card"><h4>B2B Companies</h4><p>Transitioning from wholesale to direct-to-consumer marketplace selling</p></div>
+      <div class="who-card"><h4>New Sellers</h4><p>Launching their first marketplace presence from zero</p></div>
+      <div class="who-card"><h4>Growing Brands</h4><p>Expanding existing marketplace channels to new platforms</p></div>
+      <div class="who-card"><h4>Established Brands</h4><p>Optimizing and scaling underperforming marketplace accounts</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- SERVICES -->
+<section class="services-bg" id="services">
+  <div class="container">
+    <p class="section-label">What I Do</p>
+    <h2 class="section-title">End-to-End Marketplace Services</h2>
+    <p class="section-desc">From strategy and setup to ongoing optimization, I take care of everything your marketplace presence needs to grow.</p>
+    <div class="services-grid">
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+        <h3>Marketplace Strategy &amp; Launch</h3>
+        <p>Channel selection, account setup, and a customized 6-month roadmap to launch your brand on Amazon, Wayfair or Walmart from scratch.</p>
+      </div>
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div>
+        <h3>Listing Optimization &amp; SEO</h3>
+        <p>AI-driven keyword research, title rewrites, bullet points, backend search terms, A+ content and brand store builds to maximize organic visibility.</p>
+      </div>
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <h3>PPC Campaign Management</h3>
+        <p>Sponsored Products, Sponsored Brands and Sponsored Display campaigns built for profitability across SP, SB, SD and DSP on all platforms.</p>
+      </div>
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+        <h3>Catalog &amp; Product Expansion</h3>
+        <p>SKU rationalization, new product launches, cross-channel catalog management and inventory planning to scale your product presence.</p>
+      </div>
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <h3>Account Health &amp; Compliance</h3>
+        <p>Suppressed listing resolution, ASIN reinstatements, UPC/GTIN exemptions, stranded inventory fixes and ongoing account health monitoring.</p>
+      </div>
+      <div class="service-card">
+        <div class="service-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></div>
+        <h3>Multi-Channel Expansion</h3>
+        <p>Strategic expansion across Amazon, Walmart, Wayfair, eBay, Home Depot, Overstock and more, sequenced for maximum impact and profitability.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PLATFORMS -->
+<section class="platforms" id="platforms" style="padding:3rem 2rem;border-top:1px solid var(--border)">
+  <div class="container">
+    <p class="section-label">Platforms</p>
+    <h2 class="section-title" style="margin-bottom:1.5rem">Marketplace Expertise</h2>
+    <div class="platform-grid">
+      <div class="platform-pill">Amazon 3P / Seller Central</div>
+      
+      <div class="platform-pill">Wayfair</div>
+      <div class="platform-pill">Walmart Seller</div>
+      <div class="platform-pill">eBay</div>
+      <div class="platform-pill">Target</div>
+      <div class="platform-pill">Chewy</div>
+      <div class="platform-pill">Home Depot</div>
+      <div class="platform-pill">Overstock</div>
+      <div class="platform-pill">Newegg</div>
+      <div class="platform-pill">Groupon</div>
+      <div class="platform-pill">CommerceHub</div>
+    </div>
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results" style="background:var(--cream);padding:5rem 2rem">
+  <div class="container">
+    <p class="section-label">Proven Results</p>
+    <h2 class="section-title">Numbers That Speak</h2>
+    <p class="section-desc">Real results delivered for real clients across B2B and B2C marketplace environments.</p>
+    <div class="results-grid">
+      <div class="result-card">
+        <span class="result-num">$50M+</span>
+        <p class="result-desc">Combined GMV managed across 200+ Amazon and Walmart brands simultaneously</p>
+        <p class="result-company">Ten32Media Agency</p>
+      </div>
+      <div class="result-card">
+        <span class="result-num">$1.1M+</span>
+        <p class="result-desc">New revenue generated within 11 months by scaling a brand from 50 SKUs to full multi-channel operation</p>
+        <p class="result-company">Epsilon Electronics</p>
+      </div>
+      <div class="result-card">
+        <span class="result-num">$10M+</span>
+        <p class="result-desc">Client portfolio managed as Account Director across global brands including Estee Lauder</p>
+        <p class="result-company">Brainlabs Digital</p>
+      </div>
+      <div class="result-card">
+        <span class="result-num">50% YoY</span>
+        <p class="result-desc">Consistent year-over-year sales growth sustained over 4.5 years across 8 marketplace channels</p>
+        <p class="result-company">Aramco Imports</p>
+      </div>
+      <div class="result-card">
+        <span class="result-num">95%+</span>
+        <p class="result-desc">Resolution rate on complex catalog and compliance issues across hundreds of accounts</p>
+        <p class="result-company">Ten32Media Agency</p>
+      </div>
+      <div class="result-card">
+        <span class="result-num">$500K+</span>
+        <p class="result-desc">Average monthly revenue per client account maintained through compliance and SEO improvements</p>
+        <p class="result-company">Brainlabs Digital</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- EXPERIENCE -->
+<section class="exp-bg" id="experience">
+  <div class="container">
+    <p class="section-label">Experience</p>
+    <h2 class="section-title">12+ Years in Marketplace Expansion, Optimization &amp; SEO</h2>
+    <p class="section-desc">A track record of building, growing and optimizing marketplace businesses across every major platform.</p>
+    <div class="timeline">
+      <div class="exp-item">
+        <div class="exp-header">
+          <span class="exp-title">Sr. Amazon Marketplace Manager</span>
+          <span class="exp-date">Feb 2025 – Mar 2026</span>
+        </div>
+        <div class="exp-company">Ten32Media Agency, Remote USA</div>
+        <ul class="exp-bullets">
+          <li>Managed 200+ brands with $50M+ GMV across Amazon Seller Central and Walmart</li>
+          <li>95%+ resolution rate on complex catalog and compliance issues</li>
+          <li>Led SEO, A+ content, PPC audits and seasonal campaign execution across full portfolio</li>
+        </ul>
+      </div>
+      <div class="exp-item">
+        <div class="exp-header">
+          <span class="exp-title">Sr. Amazon & Multi-Channel Marketplace Manager</span>
+          <span class="exp-date">Jan 2024 – Jan 2025</span>
+        </div>
+        <div class="exp-company">Epsilon Electronics Inc., Montebello CA</div>
+        <ul class="exp-bullets">
+          <li>Scaled brand from 50 SKUs to full multi-channel operation delivering $1.1M+ in 11 months</li>
+          <li>Launched across Amazon, eBay, Wayfair and Walmart with channel-specific strategies</li>
+          <li>Managed PPC, account health, listing optimization and B2B MAP policy enforcement</li>
+        </ul>
+      </div>
+      <div class="exp-item">
+        <div class="exp-header">
+          <span class="exp-title">Account Director, Marketplace Operations</span>
+          <span class="exp-date">Jul 2022 – Dec 2023</span>
+        </div>
+        <div class="exp-company">Brainlabs Digital Agency, Remote USA</div>
+        <ul class="exp-bullets">
+          <li>Managed $10M+ portfolio across 4 global accounts including Estee Lauder</li>
+          <li>$500K+ average monthly revenue per account through compliance and SEO improvements</li>
+          <li>Built Pacvue performance dashboards and applied Agile sprint methodology</li>
+        </ul>
+      </div>
+      <div class="exp-item">
+        <div class="exp-header">
+          <span class="exp-title">Head of Marketplace Operations</span>
+          <span class="exp-date">Jan 2018 – Jul 2022</span>
+        </div>
+        <div class="exp-company">Aramco Imports Inc., Commerce CA</div>
+        <ul class="exp-bullets">
+          <li>Built entire marketplace presence from zero across 8 channels</li>
+          <li>Drove 50% YoY sales growth consistently over 4.5 years</li>
+          <li>Led B2B to B2C transition with MAP policies and tiered pricing structures</li>
+        </ul>
+      </div>
+      <div class="exp-item">
+        <div class="exp-header">
+          <span class="exp-title">E-commerce Account Manager</span>
+          <span class="exp-date">Jan 2014 – Dec 2017</span>
+        </div>
+        <div class="exp-company">Empire Imports Inc., Cypress CA</div>
+        <ul class="exp-bullets">
+          <li>Managed EDI portal and sales channels across Amazon, eBay, Walmart, Sears, Newegg and Hayneedle</li>
+          <li>Coordinated daily operations across 6 concurrent sales channels</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOOLS -->
+<section style="background:var(--cream);padding:4rem 2rem">
+  <div class="container">
+    <p class="section-label">Tools &amp; Technology</p>
+    <h2 class="section-title" style="margin-bottom:1.5rem">Marketplace Tech Stack</h2>
+    <div class="tools-grid">
+      <span class="tool-tag">Helium 10</span>
+      <span class="tool-tag">Jungle Scout</span>
+      <span class="tool-tag">Pacvue</span>
+      <span class="tool-tag">Perpetua</span>
+      <span class="tool-tag">DataDive</span>
+      <span class="tool-tag">ChannelAdvisor</span>
+      <span class="tool-tag">Listing Mirror</span>
+      <span class="tool-tag">ShipStation</span>
+      <span class="tool-tag">CommerceHub</span>
+      <span class="tool-tag">SAP Business One</span>
+      <span class="tool-tag">NetSuite</span>
+      <span class="tool-tag">Microsoft Dynamics NAV</span>
+      <span class="tool-tag">Salesforce</span>
+      <span class="tool-tag">HubSpot</span>
+      <span class="tool-tag">Shopify</span>
+      <span class="tool-tag">Notion AI</span>
+      <span class="tool-tag">Jira</span>
+      <span class="tool-tag">Trello</span>
+    </div>
+  </div>
+</section>
+
+<!-- CERTIFICATIONS -->
+<section style="background:var(--white);padding:4rem 2rem">
+  <div class="container">
+    <p class="section-label">Certifications</p>
+    <h2 class="section-title" style="margin-bottom:1.5rem">Credentials</h2>
+    <div class="certs-grid">
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Amazon Sponsored Ads Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Amazon Video Ads Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Amazon DSP Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Amazon Retail Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Certified SAFe 5 Scrum Master</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">AWS Cloud Technical Essentials</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Google Data Analytics Capstone</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Foundations of Project Management by Google</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Digital Marketing & E-Commerce — Google</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">SEMrush Digital Agencies Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">SEMrush Amazon Seller Certification</span></div>
+      <div class="cert-item"><div class="cert-dot"></div><span class="cert-name">Supply Chain Logistics by Coursera</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<section class="contact-bg" id="contact">
+  <div class="container">
+    <p class="section-label">Get In Touch</p>
+    <h2 class="section-title">Ready to Grow Your Marketplace?</h2>
+    <p class="section-desc">Whether you are launching from scratch or looking to scale an existing presence, I would love to connect and talk about how I can help.</p>
+    <div class="contact-grid">
+      <div class="contact-item">
+        <p class="contact-label">Email</p>
+        <p class="contact-val"><a href="mailto:deepthimarthi82@gmail.com">deepthimarthi82@gmail.com</a></p>
+      </div>
+      <div class="contact-item">
+        <p class="contact-label">Phone</p>
+        <p class="contact-val"><a href="tel:5626376292">562-637-6292</a></p>
+      </div>
+      <div class="contact-item">
+        <p class="contact-label">Location</p>
+        <p class="contact-val">Whittier, CA. Available remotely worldwide.</p>
+      </div>
+      <div class="contact-item">
+        <p class="contact-label">LinkedIn</p>
+        <p class="contact-val" style="word-break:break-all;overflow-wrap:break-word;"><a href="https://www.linkedin.com/in/deepthimarthi/" target="_blank">linkedin.com/in/deepthimarthi</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>© 2026 Deepthi Marthi · Senior Amazon & Multi-Channel Marketplace Manager · Whittier, CA</p>
+</footer>
+
+</body>
+</html>
