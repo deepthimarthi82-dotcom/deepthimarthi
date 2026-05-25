@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import time
 
 class SparkAPITester:
-    def __init__(self, base_url="https://instant-cash-16.preview.emergentagent.com"):
+    def __init__(self, base_url="https://spark-dating-118.preview.emergentagent.com"):
         self.base_url = base_url
         self.api_url = f"{base_url}/api"
         self.token = None

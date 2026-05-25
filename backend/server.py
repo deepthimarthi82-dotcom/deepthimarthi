@@ -1,10 +1,13 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import re
+import json
 import logging
+import asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Dict, Any
@@ -14,6 +17,21 @@ import jwt
 import bcrypt
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
+
+def extract_json(text: str) -> dict:
+    """Extract JSON object from LLM response that may be wrapped in markdown fences."""
+    if not text:
+        raise ValueError("Empty response")
+    # Strip markdown code fences if present
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
+    if fence_match:
+        return json.loads(fence_match.group(1))
+    # Find first { or [ and parse from there
+    start = min((text.find(c) for c in "[{" if text.find(c) != -1), default=-1)
+    if start == -1:
+        raise ValueError(f"No JSON found in: {text[:200]}")
+    # Find matching close bracket
+    return json.loads(text[start:].strip())
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -38,6 +56,37 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 app = FastAPI(title="Spark - Serious Dating App")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
+
+# ==================== WEBSOCKET MANAGER ====================
+
+class ChatManager:
+    """Manages active WebSocket connections per match for real-time chat."""
+    def __init__(self):
+        self.active: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, match_id: str, ws: WebSocket):
+        await ws.accept()
+        self.active.setdefault(match_id, []).append(ws)
+
+    def disconnect(self, match_id: str, ws: WebSocket):
+        if match_id in self.active:
+            self.active[match_id] = [w for w in self.active[match_id] if w is not ws]
+            if not self.active[match_id]:
+                del self.active[match_id]
+
+    async def broadcast(self, match_id: str, payload: dict):
+        if match_id not in self.active:
+            return
+        dead = []
+        for ws in self.active[match_id]:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(match_id, ws)
+
+chat_manager = ChatManager()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -564,7 +613,83 @@ async def send_message(msg: MessageCreate, user: dict = Depends(get_current_user
     # Update match - prevent expiry
     await db.matches.update_one({"id": msg.match_id}, {"$set": {"has_messaged": True, "expires_at": None}})
     
-    return {"message": message}
+    # Broadcast to WS subscribers (strip _id for JSON)
+    broadcast_msg = {k: v for k, v in message.items() if k != "_id"}
+    await chat_manager.broadcast(msg.match_id, {"type": "message", "message": broadcast_msg})
+    
+    return {"message": broadcast_msg}
+
+@api_router.post("/messages/voice")
+async def send_voice_message(
+    match_id: str,
+    duration: int,
+    audio: UploadFile = File(...),
+    user: dict = Depends(get_current_user)
+):
+    """Upload a voice note. Audio is stored as base64 data URL for MVP simplicity."""
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    
+    import base64
+    data = await audio.read()
+    if len(data) > 2 * 1024 * 1024:  # 2MB cap
+        raise HTTPException(status_code=413, detail="Voice note too large (max 2MB)")
+    
+    mime = audio.content_type or "audio/webm"
+    data_url = f"data:{mime};base64,{base64.b64encode(data).decode()}"
+    
+    message = {
+        "id": str(uuid.uuid4()),
+        "match_id": match_id,
+        "sender_id": user["id"],
+        "content": data_url,
+        "message_type": "voice",
+        "duration": duration,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.messages.insert_one(message)
+    await db.matches.update_one({"id": match_id}, {"$set": {"has_messaged": True, "expires_at": None}})
+    
+    broadcast_msg = {k: v for k, v in message.items() if k != "_id"}
+    await chat_manager.broadcast(match_id, {"type": "message", "message": broadcast_msg})
+    
+    return {"message": broadcast_msg}
+
+@app.websocket("/api/ws/chat/{match_id}")
+async def chat_websocket(websocket: WebSocket, match_id: str, token: str):
+    """Real-time chat WebSocket. Auth via ?token=<jwt> query param."""
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload["user_id"]
+    except Exception:
+        await websocket.close(code=1008)
+        return
+    
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user_id not in [match["user1_id"], match["user2_id"]]:
+        await websocket.close(code=1008)
+        return
+    
+    await chat_manager.connect(match_id, websocket)
+    try:
+        # Notify peer of join
+        await chat_manager.broadcast(match_id, {"type": "presence", "user_id": user_id, "online": True})
+        while True:
+            data = await websocket.receive_json()
+            # Typing indicator relay
+            if data.get("type") == "typing":
+                await chat_manager.broadcast(match_id, {"type": "typing", "user_id": user_id, "is_typing": bool(data.get("is_typing"))})
+            elif data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error(f"WS error: {e}")
+    finally:
+        chat_manager.disconnect(match_id, websocket)
+        await chat_manager.broadcast(match_id, {"type": "presence", "user_id": user_id, "online": False})
 
 # ==================== AI FEATURES ====================
 
@@ -615,15 +740,14 @@ async def calculate_compatibility(target_user_id: str, user: dict = Depends(get_
             2. 3 key compatibility insights (why they might work)
             3. 1 potential challenge to be aware of
             
-            Respond in JSON format: {"score": number, "insights": ["insight1", "insight2", "insight3"], "challenge": "string"}"""
-        ).with_model("openai", "gpt-4o-mini")
+            Respond ONLY with raw JSON, no markdown, no explanation: {"score": number, "insights": ["insight1", "insight2", "insight3"], "challenge": "string"}"""
+        ).with_model("openai", "gpt-4o")
         
         response = await chat.send_message(UserMessage(
             text=f"Profile 1:\n{user_profile}\n\nProfile 2:\n{target_profile}"
         ))
         
-        import json
-        result = json.loads(response)
+        result = extract_json(response)
         
         # Store result
         await db.compatibility_scores.insert_one({
@@ -658,9 +782,9 @@ async def get_icebreakers(match_id: str, user: dict = Depends(get_current_user))
             api_key=EMERGENT_LLM_KEY,
             session_id=f"ice-{match_id}",
             system_message="""Generate 5 unique, fun, and thoughtful conversation starters for a dating app match. 
-            Make them specific to the person's profile. Be creative, not generic.
-            Respond in JSON: {"icebreakers": ["question1", "question2", ...]}"""
-        ).with_model("openai", "gpt-4o-mini")
+            Make them specific to the person's profile. Be creative, not generic. Keep each under 120 chars.
+            Respond ONLY with raw JSON, no markdown: {"icebreakers": ["question1", "question2", "question3", "question4", "question5"]}"""
+        ).with_model("openai", "gpt-4o")
         
         profile_info = f"""
         Name: {other.get('name')}
@@ -672,8 +796,7 @@ async def get_icebreakers(match_id: str, user: dict = Depends(get_current_user))
         
         response = await chat.send_message(UserMessage(text=f"Generate icebreakers for:\n{profile_info}"))
         
-        import json
-        result = json.loads(response)
+        result = extract_json(response)
         return result
     except Exception as e:
         logger.error(f"AI icebreakers error: {e}")
@@ -697,15 +820,14 @@ async def get_date_ideas(user: dict = Depends(get_current_user), location: Optio
             session_id=f"dates-{user['id']}",
             system_message="""Suggest 5 creative, memorable first date ideas. Mix classic and unique options.
             Consider the location and interests provided.
-            Respond in JSON: {"date_ideas": [{"title": "string", "description": "string", "vibe": "casual|romantic|adventurous|creative"}]}"""
-        ).with_model("openai", "gpt-4o-mini")
+            Respond ONLY with raw JSON, no markdown: {"date_ideas": [{"title": "string", "description": "string", "vibe": "casual|romantic|adventurous|creative"}]}"""
+        ).with_model("openai", "gpt-4o")
         
         response = await chat.send_message(UserMessage(
             text=f"Location: {user_location}\nInterests: {', '.join(interests) if interests else 'general'}"
         ))
         
-        import json
-        return json.loads(response)
+        return extract_json(response)
     except Exception as e:
         logger.error(f"AI date ideas error: {e}")
         return {"date_ideas": [

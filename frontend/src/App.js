@@ -1530,6 +1530,17 @@ const ChatPage = () => {
   const [loading, setLoading] = useState(true);
   const [icebreakers, setIcebreakers] = useState([]);
   const [showIcebreakers, setShowIcebreakers] = useState(false);
+  const [peerTyping, setPeerTyping] = useState(false);
+  const [peerOnline, setPeerOnline] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const wsRef = React.useRef(null);
+  const mediaRecorderRef = React.useRef(null);
+  const recordChunksRef = React.useRef([]);
+  const recordStartRef = React.useRef(0);
+  const recordIntervalRef = React.useRef(null);
+  const typingTimeoutRef = React.useRef(null);
+  const messagesEndRef = React.useRef(null);
   const { token, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -1554,17 +1565,54 @@ const ChatPage = () => {
     fetchChat();
   }, [token, matchIdFromUrl]);
 
+  // WebSocket for real-time messages, typing, presence
+  useEffect(() => {
+    if (!token || !matchIdFromUrl) return;
+    const wsBase = BACKEND_URL.replace(/^http/, "ws");
+    const ws = new WebSocket(`${wsBase}/api/ws/chat/${matchIdFromUrl}?token=${encodeURIComponent(token)}`);
+    wsRef.current = ws;
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "message") {
+          setMessages(prev => prev.find(m => m.id === data.message.id) ? prev : [...prev, data.message]);
+        } else if (data.type === "typing" && data.user_id !== user?.id) {
+          setPeerTyping(!!data.is_typing);
+        } else if (data.type === "presence" && data.user_id !== user?.id) {
+          setPeerOnline(!!data.online);
+        }
+      } catch (e) {}
+    };
+    return () => { try { ws.close(); } catch(e){} };
+  }, [token, matchIdFromUrl, user?.id]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const emitTyping = (isTyping) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: "typing", is_typing: isTyping }));
+    }
+  };
+
+  const handleTyping = (value) => {
+    setNewMessage(value);
+    emitTyping(true);
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => emitTyping(false), 1500);
+  };
+
   const sendMessage = async (content) => {
     if (!content.trim()) return;
-    
+    emitTyping(false);
     try {
       const res = await apiCall("post", "/messages", {
         match_id: matchIdFromUrl,
         content: content.trim(),
         message_type: "text"
       }, token);
-      
-      setMessages(m => [...m, res.message]);
+      setMessages(m => m.find(x => x.id === res.message.id) ? m : [...m, res.message]);
       setNewMessage("");
     } catch (e) {
       toast.error("Failed to send message");
@@ -1578,6 +1626,50 @@ const ChatPage = () => {
       setShowIcebreakers(true);
     } catch (e) {
       toast.error("Failed to get icebreakers");
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      mediaRecorderRef.current = mr;
+      recordChunksRef.current = [];
+      recordStartRef.current = Date.now();
+      setRecordingSeconds(0);
+      recordIntervalRef.current = setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - recordStartRef.current) / 1000));
+      }, 500);
+      mr.ondataavailable = (e) => e.data.size && recordChunksRef.current.push(e.data);
+      mr.onstop = async () => {
+        clearInterval(recordIntervalRef.current);
+        stream.getTracks().forEach(t => t.stop());
+        const duration = Math.max(1, Math.floor((Date.now() - recordStartRef.current) / 1000));
+        const blob = new Blob(recordChunksRef.current, { type: "audio/webm" });
+        const form = new FormData();
+        form.append("audio", blob, "voice.webm");
+        try {
+          const res = await axios.post(
+            `${API}/messages/voice?match_id=${matchIdFromUrl}&duration=${duration}`,
+            form,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          setMessages(m => m.find(x => x.id === res.data.message.id) ? m : [...m, res.data.message]);
+        } catch {
+          toast.error("Failed to send voice note");
+        }
+        setRecording(false);
+      };
+      mr.start();
+      setRecording(true);
+    } catch (e) {
+      toast.error("Microphone access denied");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
     }
   };
 
@@ -1604,7 +1696,10 @@ const ChatPage = () => {
           />
           <div className="flex-1">
             <h2 className="font-bold">{match?.user?.name}</h2>
-            <p className="text-xs text-gray-500">Active recently</p>
+            <p className="text-xs text-gray-500 flex items-center gap-1" data-testid="presence-indicator">
+              <span className={`w-2 h-2 rounded-full ${peerOnline ? 'bg-[#00CC66]' : 'bg-gray-300'}`} />
+              {peerOnline ? 'Online now' : 'Offline'}
+            </p>
           </div>
           <button 
             onClick={() => navigate("/safety/checkin/" + matchIdFromUrl)}
@@ -1636,6 +1731,7 @@ const ChatPage = () => {
           <div 
             key={msg.id}
             className={`flex ${msg.sender_id === user?.id ? 'justify-end' : 'justify-start'}`}
+            data-testid={`message-row`}
           >
             <div 
               className={`max-w-[80%] p-3 rounded-2xl ${
@@ -1644,13 +1740,33 @@ const ChatPage = () => {
                   : 'bg-white border-2 border-black rounded-bl-none'
               }`}
             >
-              <p>{msg.content}</p>
+              {msg.message_type === "voice" ? (
+                <div className="flex items-center gap-2">
+                  <audio controls src={msg.content} className="max-w-[200px]" data-testid="voice-audio" />
+                  {msg.duration ? <span className="text-xs opacity-70">{msg.duration}s</span> : null}
+                </div>
+              ) : (
+                <p>{msg.content}</p>
+              )}
               <p className={`text-xs mt-1 ${msg.sender_id === user?.id ? 'text-white/70' : 'text-gray-400'}`}>
                 {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </p>
             </div>
           </div>
         ))}
+        
+        {peerTyping && (
+          <div className="flex justify-start" data-testid="typing-indicator">
+            <div className="bg-white border-2 border-black rounded-2xl rounded-bl-none px-4 py-3">
+              <span className="inline-flex gap-1">
+                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+            </div>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
 
       {/* Icebreakers */}
@@ -1670,9 +1786,10 @@ const ChatPage = () => {
                   setNewMessage(ice);
                   setShowIcebreakers(false);
                 }}
-                className="flex-shrink-0 px-4 py-2 bg-[#CCFF00] border-2 border-black rounded-full text-sm font-medium hover:bg-[#b8e600] transition-colors"
+                className="flex-shrink-0 px-4 py-2 bg-[#CCFF00] border-2 border-black rounded-full text-sm font-medium hover:bg-[#b8e600] transition-colors max-w-[280px] truncate"
+                data-testid={`icebreaker-${i}`}
               >
-                {ice.substring(0, 40)}...
+                {ice}
               </button>
             ))}
           </div>
@@ -1681,28 +1798,49 @@ const ChatPage = () => {
 
       {/* Input */}
       <div className="sticky bottom-0 bg-white border-t-2 border-black p-4">
-        <div className="flex gap-2">
-          <button className="p-3 hover:bg-gray-100 rounded-full" data-testid="voice-note-btn">
-            <Mic className="w-5 h-5" />
-          </button>
-          <input
-            type="text"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage(newMessage)}
-            placeholder="Type a message..."
-            className="input-brutal flex-1"
-            data-testid="message-input"
-          />
-          <button 
-            onClick={() => sendMessage(newMessage)}
-            className="btn-primary !px-4 !py-3"
-            disabled={!newMessage.trim()}
-            data-testid="send-btn"
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </div>
+        {recording ? (
+          <div className="flex items-center gap-3" data-testid="recording-bar">
+            <div className="flex-1 flex items-center gap-2 px-4 py-3 bg-red-50 border-2 border-[#FF2E63] rounded-full">
+              <span className="w-3 h-3 bg-[#FF2E63] rounded-full animate-pulse" />
+              <span className="font-bold text-[#FF2E63]">Recording {recordingSeconds}s</span>
+            </div>
+            <button
+              onClick={stopRecording}
+              className="btn-primary !px-4 !py-3"
+              data-testid="stop-record-btn"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={startRecording}
+              className="p-3 hover:bg-gray-100 rounded-full"
+              data-testid="voice-note-btn"
+              title="Record voice note"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+            <input
+              type="text"
+              value={newMessage}
+              onChange={(e) => handleTyping(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendMessage(newMessage)}
+              placeholder="Type a message..."
+              className="input-brutal flex-1"
+              data-testid="message-input"
+            />
+            <button 
+              onClick={() => sendMessage(newMessage)}
+              className="btn-primary !px-4 !py-3"
+              disabled={!newMessage.trim()}
+              data-testid="send-btn"
+            >
+              <Send className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
