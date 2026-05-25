@@ -13,6 +13,16 @@ const AuthContext = createContext(null);
 
 const useAuth = () => useContext(AuthContext);
 
+// Copyright footer rendered across the app
+const CopyrightFooter = ({ className = "" }) => (
+  <p
+    className={`text-center text-xs text-gray-500 py-3 ${className}`}
+    data-testid="copyright-footer"
+  >
+    © 2026 Deepthi. All rights reserved.
+  </p>
+);
+
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem("spark_token"));
@@ -225,13 +235,14 @@ const LandingPage = () => {
       <footer className="border-t-2 border-black py-8 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <p className="font-bold" style={{ fontFamily: 'Syne' }}>
-            <span className="text-[#FF2E63]">Spark</span> © 2025
+            <span className="text-[#FF2E63]">Spark</span>
           </p>
           <div className="flex gap-6 text-gray-600">
             <span className="hover:text-[#FF2E63] cursor-pointer">Privacy</span>
             <span className="hover:text-[#FF2E63] cursor-pointer">Terms</span>
             <span className="hover:text-[#FF2E63] cursor-pointer">Safety</span>
           </div>
+          <p className="text-sm text-gray-500" data-testid="copyright-footer">© 2026 Deepthi. All rights reserved.</p>
         </div>
       </footer>
     </div>
@@ -350,6 +361,7 @@ const AuthPage = ({ isLogin = true }) => {
             </p>
           </div>
         </div>
+        <CopyrightFooter className="mt-6" />
       </div>
     </div>
   );
@@ -718,6 +730,7 @@ const OnboardingPage = () => {
             )}
           </div>
         </div>
+        <CopyrightFooter className="mt-6" />
       </div>
     </div>
   );
@@ -989,6 +1002,7 @@ const QuizPage = () => {
             )}
           </div>
         </div>
+        <CopyrightFooter className="mt-6" />
       </div>
     </div>
   );
@@ -1035,6 +1049,7 @@ const AppLayout = ({ children }) => {
       {/* Content */}
       <main className="max-w-lg mx-auto px-4 py-6">
         {children}
+        <CopyrightFooter className="mt-8" />
       </main>
 
       {/* Bottom Navigation */}
@@ -1888,6 +1903,7 @@ const ChatPage = () => {
             </button>
           </div>
         )}
+        <CopyrightFooter className="!py-1 !text-[10px]" />
       </div>
       {/* Date Vault Modal */}
       {showRecap && (
