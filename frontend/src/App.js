@@ -111,6 +111,146 @@ const apiCall = async (method, endpoint, data = null, token = null) => {
   return res.data;
 };
 
+// ==================== LEGAL PAGES ====================
+const LegalLayout = ({ title, effectiveDate, children, testid }) => {
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-screen bg-[#FDFBF7]" data-testid={testid}>
+      <header className="sticky top-0 z-50 bg-[#FDFBF7] border-b-2 border-black px-6 py-4">
+        <div className="max-w-3xl mx-auto flex justify-between items-center">
+          <button onClick={() => navigate("/")} className="inline-flex" aria-label="Home">
+            <SparkLogo size="sm" />
+          </button>
+          <button
+            onClick={() => navigate(-1)}
+            className="btn-ghost inline-flex items-center gap-1"
+            data-testid="legal-back-btn"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+        </div>
+      </header>
+      <main className="max-w-3xl mx-auto px-6 py-10">
+        <h1 className="text-4xl md:text-5xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>
+          {title}
+        </h1>
+        <p className="text-sm text-gray-500 mb-2">sparkmatch.dating</p>
+        <p className="text-sm text-gray-500 mb-8">Effective Date: {effectiveDate}</p>
+        <article className="card-brutal p-8 space-y-6 leading-relaxed text-gray-800">
+          {children}
+        </article>
+        <CopyrightFooter className="mt-8" />
+      </main>
+    </div>
+  );
+};
+
+const LegalSection = ({ heading, children }) => (
+  <section>
+    <h2 className="text-xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>{heading}</h2>
+    <div className="space-y-2">{children}</div>
+  </section>
+);
+
+const PrivacyPage = () => (
+  <LegalLayout title="Privacy Policy" effectiveDate="May 25, 2026" testid="privacy-page">
+    <LegalSection heading="1. Introduction">
+      <p>Welcome to Spark Match ("Spark," "we," "us," or "our"). We are committed to protecting your personal information. This Privacy Policy explains how we collect, use, and protect your data when you use sparkmatch.dating.</p>
+    </LegalSection>
+    <LegalSection heading="2. Information We Collect">
+      <p>We may collect the following information when you use Spark Match:</p>
+      <ul className="list-disc pl-6 space-y-1">
+        <li>Name, email address, date of birth, and gender</li>
+        <li>Profile photos and bio information</li>
+        <li>Location data (city/region level only)</li>
+        <li>Messages and communications between users</li>
+        <li>Device information and usage data</li>
+      </ul>
+    </LegalSection>
+    <LegalSection heading="3. How We Use Your Information">
+      <p>We use your information to:</p>
+      <ul className="list-disc pl-6 space-y-1">
+        <li>Create and manage your account</li>
+        <li>Match you with compatible users</li>
+        <li>Send notifications and updates</li>
+        <li>Improve our services</li>
+        <li>Ensure safety and prevent fraud</li>
+      </ul>
+    </LegalSection>
+    <LegalSection heading="4. California Privacy Rights (CCPA)">
+      <p>As a California resident, you have the right to know what personal data we collect, request deletion of your data, and opt out of the sale of your personal information. We do not sell your personal data to third parties. To exercise your rights, contact us at <a href="mailto:privacy@sparkmatch.dating" className="text-[#FF2E63] font-bold hover:underline">privacy@sparkmatch.dating</a>.</p>
+    </LegalSection>
+    <LegalSection heading="5. Data Security">
+      <p>We take reasonable measures to protect your personal information from unauthorized access, disclosure, or misuse. However, no method of transmission over the internet is 100% secure.</p>
+    </LegalSection>
+    <LegalSection heading="6. Data Retention">
+      <p>We retain your data for as long as your account is active or as needed to provide services. You may request deletion of your account and associated data at any time.</p>
+    </LegalSection>
+    <LegalSection heading="7. Third-Party Services">
+      <p>We may use third-party services to operate our platform. These services have their own privacy policies and we are not responsible for their practices.</p>
+    </LegalSection>
+    <LegalSection heading="8. Children's Privacy">
+      <p>Spark Match is strictly for users aged 18 and older. We do not knowingly collect information from anyone under 18. If we discover a user is under 18, their account will be immediately terminated.</p>
+    </LegalSection>
+    <LegalSection heading="9. Changes to This Policy">
+      <p>We may update this Privacy Policy from time to time. We will notify you of significant changes via email or in-app notification.</p>
+    </LegalSection>
+    <LegalSection heading="10. Contact Us">
+      <p>For privacy-related questions, contact us at:<br />
+        <a href="mailto:privacy@sparkmatch.dating" className="text-[#FF2E63] font-bold hover:underline">privacy@sparkmatch.dating</a>
+      </p>
+    </LegalSection>
+  </LegalLayout>
+);
+
+const TermsPage = () => (
+  <LegalLayout title="Terms of Use" effectiveDate="May 25, 2026" testid="terms-page">
+    <LegalSection heading="1. Acceptance of Terms">
+      <p>By accessing or using Spark Match at sparkmatch.dating, you agree to be bound by these Terms of Use. If you do not agree, please do not use our service.</p>
+    </LegalSection>
+    <LegalSection heading="2. Eligibility">
+      <p>You must be at least 18 years of age to use Spark Match. By creating an account, you confirm that you are 18 or older. We reserve the right to terminate accounts of users found to be under 18.</p>
+    </LegalSection>
+    <LegalSection heading="3. User Conduct">
+      <p>You agree not to:</p>
+      <ul className="list-disc pl-6 space-y-1">
+        <li>Harass, threaten, or harm other users</li>
+        <li>Post false, misleading, or fraudulent information</li>
+        <li>Use the platform for commercial solicitation or spam</li>
+        <li>Impersonate another person or entity</li>
+        <li>Upload illegal, offensive, or inappropriate content</li>
+        <li>Attempt to hack, scrape, or damage our platform</li>
+      </ul>
+    </LegalSection>
+    <LegalSection heading="4. Intellectual Property">
+      <p>All content, design, code, and branding on Spark Match is owned by Deepthi Marthi and protected under US copyright law (Case #1-15170846081). You may not copy, reproduce, or distribute any part of this platform without written permission.</p>
+    </LegalSection>
+    <LegalSection heading="5. User Content">
+      <p>You retain ownership of content you post. By posting, you grant Spark Match a non-exclusive license to display your content within the platform. You are solely responsible for your content.</p>
+    </LegalSection>
+    <LegalSection heading="6. Safety">
+      <p>Spark Match is not responsible for the conduct of users on or off the platform. Always meet in public places and take personal safety precautions. Report suspicious behavior immediately using our Safety feature.</p>
+    </LegalSection>
+    <LegalSection heading="7. Disclaimer of Warranties">
+      <p>Spark Match is provided "as is" without warranties of any kind. We do not guarantee that you will find a match or that the service will be uninterrupted or error-free.</p>
+    </LegalSection>
+    <LegalSection heading="8. Limitation of Liability">
+      <p>To the maximum extent permitted by law, Deepthi Marthi and Spark Match shall not be liable for any indirect, incidental, or consequential damages arising from your use of the platform.</p>
+    </LegalSection>
+    <LegalSection heading="9. Termination">
+      <p>We reserve the right to suspend or terminate your account at any time for violation of these terms or for any other reason at our sole discretion.</p>
+    </LegalSection>
+    <LegalSection heading="10. Governing Law">
+      <p>These Terms are governed by the laws of the State of California, United States.</p>
+    </LegalSection>
+    <LegalSection heading="11. Contact Us">
+      <p>For questions about these Terms, contact us at:<br />
+        <a href="mailto:legal@sparkmatch.dating" className="text-[#FF2E63] font-bold hover:underline">legal@sparkmatch.dating</a>
+      </p>
+    </LegalSection>
+  </LegalLayout>
+);
+
 // ==================== LANDING PAGE ====================
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -263,8 +403,8 @@ const LandingPage = () => {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <SparkLogo size="sm" />
           <div className="flex gap-6 text-gray-600">
-            <span className="hover:text-[#FF2E63] cursor-pointer">Privacy</span>
-            <span className="hover:text-[#FF2E63] cursor-pointer">Terms</span>
+            <button onClick={() => navigate("/privacy")} className="hover:text-[#FF2E63] cursor-pointer" data-testid="footer-privacy-link">Privacy</button>
+            <button onClick={() => navigate("/terms")} className="hover:text-[#FF2E63] cursor-pointer" data-testid="footer-terms-link">Terms</button>
             <span className="hover:text-[#FF2E63] cursor-pointer">Safety</span>
           </div>
           <p className="text-sm text-gray-500" data-testid="copyright-footer">© 2026 Deepthi Marthi. All rights reserved.</p>
@@ -2475,6 +2615,8 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<LandingPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/terms" element={<TermsPage />} />
             <Route path="/login" element={<AuthPage isLogin={true} />} />
             <Route path="/signup" element={<AuthPage isLogin={false} />} />
             <Route path="/onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
