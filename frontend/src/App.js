@@ -23,6 +23,38 @@ const CopyrightFooter = ({ className = "" }) => (
   </p>
 );
 
+// Spark brand logo (lightning bolt + wordmark)
+const SparkLogo = ({ size = "md", className = "" }) => {
+  const sizes = {
+    sm: { gap: "gap-1.5", text: "text-2xl", iconW: 18, iconH: 22 },
+    md: { gap: "gap-2", text: "text-3xl", iconW: 22, iconH: 26 },
+    lg: { gap: "gap-2", text: "text-4xl", iconW: 28, iconH: 34 },
+  };
+  const s = sizes[size] || sizes.md;
+  return (
+    <span className={`inline-flex items-center ${s.gap} ${className}`} data-testid="spark-logo">
+      <svg
+        width={s.iconW}
+        height={s.iconH}
+        viewBox="0 0 24 28"
+        fill="#FF2E63"
+        stroke="#000"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M14 0 L2 16 L10 16 L8 28 L22 10 L14 10 Z" />
+      </svg>
+      <span
+        className={`font-bold text-[#FF2E63] ${s.text}`}
+        style={{ fontFamily: 'Syne' }}
+      >
+        Spark
+      </span>
+    </span>
+  );
+};
+
 const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem("spark_token"));
@@ -109,9 +141,7 @@ const LandingPage = () => {
         <div className="max-w-7xl mx-auto px-6 py-8">
           {/* Nav */}
           <nav className="flex justify-between items-center mb-16">
-            <h1 className="text-3xl font-bold" style={{ fontFamily: 'Syne' }}>
-              <span className="text-[#FF2E63]">Spark</span>
-            </h1>
+            <SparkLogo size="md" data-testid="brand-landing-nav" />
             <button 
               onClick={() => navigate("/login")}
               className="btn-ghost"
@@ -234,9 +264,7 @@ const LandingPage = () => {
       {/* Footer */}
       <footer className="border-t-2 border-black py-8 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="font-bold" style={{ fontFamily: 'Syne' }}>
-            <span className="text-[#FF2E63]">Spark</span>
-          </p>
+          <SparkLogo size="sm" />
           <div className="flex gap-6 text-gray-600">
             <span className="hover:text-[#FF2E63] cursor-pointer">Privacy</span>
             <span className="hover:text-[#FF2E63] cursor-pointer">Terms</span>
@@ -282,13 +310,13 @@ const AuthPage = ({ isLogin = true }) => {
     <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-6" data-testid={isLogin ? "login-page" : "signup-page"}>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 
-            className="text-4xl font-bold cursor-pointer mb-2" 
-            style={{ fontFamily: 'Syne' }}
+          <button
             onClick={() => navigate("/")}
+            className="mb-2 inline-flex"
+            aria-label="Go home"
           >
-            <span className="text-[#FF2E63]">Spark</span>
-          </h1>
+            <SparkLogo size="lg" />
+          </button>
           <p className="text-gray-600">
             {isLogin ? "Welcome back, hottie" : "Let's get you set up"}
           </p>
@@ -1026,9 +1054,7 @@ const AppLayout = ({ children }) => {
       {/* Top Header */}
       <header className="sticky top-0 z-50 bg-[#FDFBF7] border-b-2 border-black px-6 py-4">
         <div className="max-w-lg mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>
-            <span className="text-[#FF2E63]">Spark</span>
-          </h1>
+          <SparkLogo size="sm" />
           <div className="flex items-center gap-3">
             {user?.subscription !== "free" && (
               <span className="badge-primary flex items-center gap-1">
