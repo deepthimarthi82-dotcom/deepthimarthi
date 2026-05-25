@@ -127,7 +127,7 @@ const LandingPage = () => {
               <div className="inline-block">
                 <span className="badge-accent">For Serious Connections Only</span>
               </div>
-              <h2 className="text-5xl md:text-7xl font-extrabold leading-tight" style={{ fontFamily: 'Syne' }}>
+              <h2 className="text-5xl md:text-7xl font-extrabold leading-tight pr-2" style={{ fontFamily: 'Syne' }}>
                 Dating Without The <span className="text-[#FF2E63]">BS</span>
               </h2>
               <p className="text-xl text-gray-600 max-w-lg">
