@@ -419,12 +419,17 @@ const AuthPage = ({ isLogin = true }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isLogin && !ageConfirmed) {
+      toast.error("You must confirm you are 18 or older to sign up");
+      return;
+    }
     setLoading(true);
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/register";
@@ -503,10 +508,45 @@ const AuthPage = ({ isLogin = true }) => {
               />
             </div>
 
+            {!isLogin && (
+              <label
+                className="flex items-start gap-3 cursor-pointer select-none p-3 bg-[#FDFBF7] border-2 border-black rounded-lg hover:bg-white transition-colors"
+                data-testid="age-confirm-label"
+              >
+                <input
+                  type="checkbox"
+                  checked={ageConfirmed}
+                  onChange={(e) => setAgeConfirmed(e.target.checked)}
+                  className="mt-1 w-5 h-5 accent-[#FF2E63] cursor-pointer flex-shrink-0"
+                  required
+                  data-testid="age-confirm-checkbox"
+                />
+                <span className="text-sm leading-tight">
+                  I confirm that I am <span className="font-bold">18 or older</span> and agree to the{" "}
+                  <button
+                    type="button"
+                    onClick={() => navigate("/terms")}
+                    className="text-[#FF2E63] font-bold hover:underline"
+                  >
+                    Terms
+                  </button>{" "}
+                  &amp;{" "}
+                  <button
+                    type="button"
+                    onClick={() => navigate("/privacy")}
+                    className="text-[#FF2E63] font-bold hover:underline"
+                  >
+                    Privacy Policy
+                  </button>
+                  .
+                </span>
+              </label>
+            )}
+
             <button 
               type="submit" 
               className="btn-primary w-full"
-              disabled={loading}
+              disabled={loading || (!isLogin && !ageConfirmed)}
               data-testid="submit-btn"
             >
               {loading ? "Loading..." : (isLogin ? "Log In" : "Create Account")}
