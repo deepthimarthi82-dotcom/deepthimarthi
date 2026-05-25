@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Spark Logo Options</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@500&display=swap" rel="stylesheet">
+<style>
+  body { background:#FDFBF7; font-family:'DM Sans',sans-serif; margin:0; padding:48px 32px; color:#000; }
+  h1 { font-family:'Syne',sans-serif; font-size:28px; margin:0 0 8px; }
+  p.sub { color:#666; margin:0 0 40px; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:24px; max-width:1100px; }
+  .opt {
+    background:#fff;
+    border:3px solid #000;
+    border-radius:14px;
+    box-shadow:6px 6px 0 #000;
+    padding:36px 28px;
+    display:flex;
+    align-items:center;
+    gap:14px;
+    position:relative;
+  }
+  .opt .num {
+    position:absolute; top:10px; left:14px;
+    font-size:11px; font-weight:700; color:#999; letter-spacing:0.1em;
+  }
+  .opt .label {
+    position:absolute; bottom:10px; right:14px;
+    font-size:12px; font-weight:600; color:#555;
+  }
+  .word { font-family:'Syne',sans-serif; font-weight:800; font-size:48px; color:#FF2E63; line-height:1; }
+  /* Symbols */
+  .sym-bolt { width:42px; height:48px; }
+  .sym-flame { width:42px; height:48px; }
+  .sym-spark { width:46px; height:48px; }
+  .sym-heart-bolt { width:48px; height:48px; }
+  .sym-burst { width:46px; height:48px; }
+  .sym-orbit { width:48px; height:48px; }
+</style>
+</head>
+<body>
+  <h1>Spark logo symbol — pick one</h1>
+  <p class="sub">All symbols use Spark Red (#FF2E63). Click your favorite number below to choose.</p>
+
+  <div class="grid">
+
+    <!-- Option 1: Lightning Bolt (literal spark) -->
+    <div class="opt">
+      <span class="num">OPTION 1</span>
+      <svg class="sym-bolt" viewBox="0 0 24 28" fill="#FF2E63" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M14 0 L2 16 L10 16 L8 28 L22 10 L14 10 Z"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">Lightning Bolt</span>
+    </div>
+
+    <!-- Option 2: 4-point sparkle/star -->
+    <div class="opt">
+      <span class="num">OPTION 2</span>
+      <svg class="sym-spark" viewBox="0 0 32 32" fill="#FF2E63" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M16 1 L19 13 L31 16 L19 19 L16 31 L13 19 L1 16 L13 13 Z"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">4-Point Sparkle</span>
+    </div>
+
+    <!-- Option 3: Flame -->
+    <div class="opt">
+      <span class="num">OPTION 3</span>
+      <svg class="sym-flame" viewBox="0 0 24 28" fill="#FF2E63" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M12 1 C 14 6 19 8 19 15 C 19 22 15 27 12 27 C 9 27 5 22 5 15 C 5 11 7 9 8 10 C 8 7 10 4 12 1 Z"/>
+        <path d="M12 13 C 13 16 15 17 15 20 C 15 23 13 25 12 25 C 11 25 9 23 9 20 C 9 18 10 17 11 17" fill="#FFD400" stroke="none"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">Flame</span>
+    </div>
+
+    <!-- Option 4: Heart with lightning -->
+    <div class="opt">
+      <span class="num">OPTION 4</span>
+      <svg class="sym-heart-bolt" viewBox="0 0 32 32" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M16 28 C 16 28 4 20 4 11 C 4 6 8 3 12 3 C 14 3 16 5 16 7 C 16 5 18 3 20 3 C 24 3 28 6 28 11 C 28 20 16 28 16 28 Z" fill="#FF2E63"/>
+        <path d="M17 9 L11 17 L15 17 L13 23 L21 14 L17 14 Z" fill="#FFD400" stroke="#000" stroke-width="1.2"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">Heart + Bolt</span>
+    </div>
+
+    <!-- Option 5: Starburst/explosion -->
+    <div class="opt">
+      <span class="num">OPTION 5</span>
+      <svg class="sym-burst" viewBox="0 0 32 32" fill="#FF2E63" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M16 1 L18 11 L26 4 L21 13 L31 14 L22 17 L28 25 L18 20 L17 31 L14 21 L4 27 L9 18 L1 16 L10 13 L4 6 L13 11 Z"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">Starburst</span>
+    </div>
+
+    <!-- Option 6: Asymmetric spark (Notion / Linear style) -->
+    <div class="opt">
+      <span class="num">OPTION 6</span>
+      <svg class="sym-orbit" viewBox="0 0 32 32" fill="#FF2E63" stroke="#000" stroke-width="1.5" stroke-linejoin="round">
+        <path d="M16 2 C 17 12 20 15 30 16 C 20 17 17 20 16 30 C 15 20 12 17 2 16 C 12 15 15 12 16 2 Z"/>
+      </svg>
+      <span class="word">Spark</span>
+      <span class="label">Asymmetric Sparkle</span>
+    </div>
+
+  </div>
+</body>
+</html>
