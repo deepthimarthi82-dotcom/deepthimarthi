@@ -26,9 +26,9 @@ const CopyrightFooter = ({ className = "" }) => (
 // Spark brand logo (lightning bolt + wordmark)
 const SparkLogo = ({ size = "md", className = "" }) => {
   const sizes = {
-    sm: { gap: "gap-1.5", text: "text-2xl", iconW: 18, iconH: 22 },
-    md: { gap: "gap-2", text: "text-3xl", iconW: 22, iconH: 26 },
-    lg: { gap: "gap-2", text: "text-4xl", iconW: 28, iconH: 34 },
+    sm: { gap: "gap-0.5", text: "text-2xl", iconW: 18, iconH: 22 },
+    md: { gap: "gap-1", text: "text-3xl", iconW: 22, iconH: 26 },
+    lg: { gap: "gap-1", text: "text-4xl", iconW: 28, iconH: 34 },
   };
   const s = sizes[size] || sizes.md;
   return (
@@ -38,9 +38,6 @@ const SparkLogo = ({ size = "md", className = "" }) => {
         height={s.iconH}
         viewBox="0 0 24 28"
         fill="#FF2E63"
-        stroke="#000"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
         aria-hidden="true"
       >
         <path d="M14 0 L2 16 L10 16 L8 28 L22 10 L14 10 Z" />
