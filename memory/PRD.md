@@ -32,37 +32,55 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - [x] "Who Likes You" premium feature
 - [x] Daily picks
 
-## What's Been Implemented (Jan 2026)
+## What's Been Implemented
 
-### Phase 1 - MVP Complete ✅
+### Phase 1 - MVP Complete (Jan 2026) ✅
 - **Auth System**: Registration, login, JWT tokens
 - **Profile System**: 5-step onboarding wizard
 - **Compatibility Quiz**: 4-step quiz for better matching
 - **Discovery**: Swipe deck with profile cards
 - **Matching**: Like/Pass/Super Like with match detection
-- **Chat**: Real-time messaging with AI icebreakers
+- **Chat**: Messaging with AI icebreakers
 - **Subscriptions**: Stripe checkout for Premium ($19.99/mo) and VIP ($39.99/mo)
 - **Safety**: Date check-in feature
 - **Design**: Neo-Brutalist style with Syne/DM Sans fonts
 
+### Phase 2 - Real-time & Real AI (Feb 2026) ✅
+- **Real AI** via Emergent LLM Key + GPT-4o:
+  - Compatibility scoring with persisted insights & challenge
+  - Profile-specific icebreakers (no longer hardcoded fallback)
+  - Location-aware date ideas
+  - Fixed: `extract_json()` helper handles markdown-wrapped responses
+- **Real-time Chat (WebSockets)** at `/api/ws/chat/{match_id}?token=<jwt>`:
+  - Instant message delivery to peer
+  - Typing indicators
+  - Online/offline presence
+- **Voice Notes** via `POST /api/messages/voice` (multipart, 2MB cap, base64 data URL)
+- **Stripe Checkout** verified end-to-end (test key, real session URLs)
+- **Backend Tests**: 17 pytest cases at `/app/backend/tests/backend_test.py` — 100% passing
+
 ### Demo Data Seeded
 - 5 demo profiles (demo1-5@spark.app, password: password123)
-- Mixed genders and preferences for testing
+- See `/app/memory/test_credentials.md` for details
 
 ## Prioritized Backlog
 
 ### P0 (Critical)
-- [ ] Voice notes in chat
+- [x] Voice notes in chat (Feb 2026)
+- [x] Real-time chat WebSockets (Feb 2026)
+- [x] Real AI compatibility + icebreakers (Feb 2026)
 - [ ] Video date feature (in-app calls)
 - [ ] Push notifications
 - [ ] Profile photo upload (currently uses URLs)
 
 ### P1 (High Priority)
+- [ ] Refactor `App.js` (2154 lines) into modular components
 - [ ] Background check integration
 - [ ] Mutual friends indicator
-- [ ] Response time indicator
 - [ ] Match expiry notifications
-- [ ] Feedback after unmatching
+- [ ] Voice note storage → S3/object storage (currently inline base64)
+- [ ] WebSocket scale-out via Redis pub/sub
+- [ ] Rate limiting on AI endpoints
 
 ### P2 (Medium Priority)
 - [ ] Profile boost implementation
