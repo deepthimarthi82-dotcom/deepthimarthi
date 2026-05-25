@@ -19,7 +19,7 @@ const CopyrightFooter = ({ className = "" }) => (
     className={`text-center text-xs text-gray-500 py-3 ${className}`}
     data-testid="copyright-footer"
   >
-    © 2026 Deepthi Marthi. All rights reserved.
+    © 2026 sparkmatch.dating | All rights reserved.
   </p>
 );
 
@@ -407,7 +407,7 @@ const LandingPage = () => {
             <button onClick={() => navigate("/terms")} className="hover:text-[#FF2E63] cursor-pointer" data-testid="footer-terms-link">Terms</button>
             <span className="hover:text-[#FF2E63] cursor-pointer">Safety</span>
           </div>
-          <p className="text-sm text-gray-500" data-testid="copyright-footer">© 2026 Deepthi Marthi. All rights reserved.</p>
+          <p className="text-sm text-gray-500" data-testid="copyright-footer">© 2026 sparkmatch.dating | All rights reserved.</p>
         </div>
       </footer>
     </div>
