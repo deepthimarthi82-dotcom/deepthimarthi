@@ -808,6 +808,86 @@ async def get_icebreakers(match_id: str, user: dict = Depends(get_current_user))
             "What's on your bucket list?"
         ]}
 
+@api_router.get("/ai/recap/{match_id}")
+async def get_relationship_recap(match_id: str, force_refresh: bool = False, user: dict = Depends(get_current_user)):
+    """Date Vault: AI-generated shareable recap of the conversation so far."""
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+
+    msgs = await db.messages.find({"match_id": match_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    text_msgs = [m for m in msgs if m.get("message_type") != "voice"]
+    if len(msgs) < 10:
+        return {
+            "unlocked": False,
+            "messages_needed": 10 - len(msgs),
+            "current_count": len(msgs),
+            "message": f"Keep chatting! Date Vault unlocks at 10 messages ({10 - len(msgs)} to go)."
+        }
+
+    # Return cached recap unless force_refresh
+    if not force_refresh:
+        cached = await db.recaps.find_one(
+            {"match_id": match_id},
+            {"_id": 0},
+            sort=[("created_at", -1)]
+        )
+        if cached and cached.get("message_count_at_generation") == len(msgs):
+            return {"unlocked": True, **cached}
+
+    other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    other = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+
+    transcript_lines = []
+    for m in text_msgs[-100:]:  # cap context
+        speaker = user.get("name", "You") if m["sender_id"] == user["id"] else other.get("name", "Match")
+        transcript_lines.append(f"{speaker}: {m['content']}")
+    transcript = "\n".join(transcript_lines)
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"recap-{match_id}-{len(msgs)}",
+            system_message="""You are an expert relationship analyst writing a beautiful, shareable conversation recap. Analyze the chat transcript and produce:
+- "vibe": one of "playful", "deep", "flirty", "intellectual", "warm", "adventurous"
+- "headline": a punchy 6-10 word title for this relationship's story so far
+- "sentiment_score": 0-100 (how positive/connected the conversation feels)
+- "common_interests": array of 3-5 specific things they both seem to care about (extract from transcript, no generics)
+- "memorable_moments": array of 2-3 short quotes or moments that stood out (one sentence each)
+- "compatibility_signals": array of 2-3 reasons this could work long-term
+- "next_step_suggestion": single concrete action they should take next (e.g. "Plan that hiking date you both joked about")
+- "growth_area": one thing they could explore deeper
+
+Respond ONLY with raw JSON, no markdown. Be warm, specific, never generic."""
+        ).with_model("openai", "gpt-4o")
+
+        response = await chat.send_message(UserMessage(
+            text=f"Transcript between {user.get('name')} and {other.get('name')}:\n\n{transcript}"
+        ))
+        result = extract_json(response)
+    except Exception as e:
+        logger.error(f"Recap error: {e}")
+        raise HTTPException(status_code=503, detail="Could not generate recap - try again in a moment")
+
+    recap = {
+        "id": str(uuid.uuid4()),
+        "match_id": match_id,
+        "generated_for_user_id": user["id"],
+        "other_user_name": other.get("name"),
+        "vibe": result.get("vibe"),
+        "headline": result.get("headline"),
+        "sentiment_score": result.get("sentiment_score"),
+        "common_interests": result.get("common_interests", []),
+        "memorable_moments": result.get("memorable_moments", []),
+        "compatibility_signals": result.get("compatibility_signals", []),
+        "next_step_suggestion": result.get("next_step_suggestion"),
+        "growth_area": result.get("growth_area"),
+        "message_count_at_generation": len(msgs),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.recaps.insert_one(dict(recap))
+    return {"unlocked": True, **recap}
+
 @api_router.get("/ai/date-ideas")
 async def get_date_ideas(user: dict = Depends(get_current_user), location: Optional[str] = None):
     """Get AI-suggested date ideas based on location and interests"""

@@ -1534,6 +1534,9 @@ const ChatPage = () => {
   const [peerOnline, setPeerOnline] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recap, setRecap] = useState(null);
+  const [showRecap, setShowRecap] = useState(false);
+  const [recapLoading, setRecapLoading] = useState(false);
   const wsRef = React.useRef(null);
   const mediaRecorderRef = React.useRef(null);
   const recordChunksRef = React.useRef([]);
@@ -1629,6 +1632,42 @@ const ChatPage = () => {
     }
   };
 
+  const openDateVault = async () => {
+    setShowRecap(true);
+    setRecapLoading(true);
+    try {
+      const res = await apiCall("get", `/ai/recap/${matchIdFromUrl}`, null, token);
+      setRecap(res);
+    } catch (e) {
+      toast.error("Could not open Date Vault");
+      setShowRecap(false);
+    }
+    setRecapLoading(false);
+  };
+
+  const refreshRecap = async () => {
+    setRecapLoading(true);
+    try {
+      const res = await apiCall("get", `/ai/recap/${matchIdFromUrl}?force_refresh=true`, null, token);
+      setRecap(res);
+      toast.success("Recap refreshed!");
+    } catch (e) {
+      toast.error("Failed to refresh");
+    }
+    setRecapLoading(false);
+  };
+
+  const shareRecap = () => {
+    if (!recap?.unlocked) return;
+    const text = `${recap.headline} — Spark Date Vault with ${recap.other_user_name} | Vibe: ${recap.vibe} | Connection: ${recap.sentiment_score}/100`;
+    if (navigator.share) {
+      navigator.share({ title: "My Spark Date Vault", text }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard!");
+    }
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1701,6 +1740,14 @@ const ChatPage = () => {
               {peerOnline ? 'Online now' : 'Offline'}
             </p>
           </div>
+          <button 
+            onClick={openDateVault}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            data-testid="date-vault-btn"
+            title="Open Date Vault"
+          >
+            <Sparkles className="w-5 h-5 text-[#FF2E63]" />
+          </button>
           <button 
             onClick={() => navigate("/safety/checkin/" + matchIdFromUrl)}
             className="p-2 hover:bg-gray-100 rounded-full"
@@ -1842,6 +1889,127 @@ const ChatPage = () => {
           </div>
         )}
       </div>
+      {/* Date Vault Modal */}
+      {showRecap && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" data-testid="recap-modal">
+          <div className="card-brutal max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-6 h-6 text-[#FF2E63]" />
+                  <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Date Vault</h2>
+                </div>
+                <button onClick={() => setShowRecap(false)} className="p-1 hover:bg-gray-100 rounded-full" data-testid="close-recap">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {recapLoading ? (
+                <div className="py-12 text-center">
+                  <Heart className="w-10 h-10 text-[#FF2E63] mx-auto animate-bounce" />
+                  <p className="mt-4 text-sm font-bold">Reading your story...</p>
+                </div>
+              ) : !recap?.unlocked ? (
+                <div className="py-8 text-center" data-testid="recap-locked">
+                  <div className="w-20 h-20 mx-auto mb-4 bg-gray-100 border-2 border-black rounded-full flex items-center justify-center">
+                    <Lock className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2" style={{ fontFamily: 'Syne' }}>Not Quite Yet</h3>
+                  <p className="text-gray-600 mb-4">{recap?.message}</p>
+                  <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-[#FF2E63] transition-all"
+                      style={{ width: `${Math.min(100, (recap?.current_count / 10) * 100)}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">{recap?.current_count}/10 messages</p>
+                </div>
+              ) : (
+                <div className="space-y-5" data-testid="recap-unlocked">
+                  {/* Vibe Badge */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="badge-accent uppercase tracking-wide">{recap.vibe}</span>
+                    <span className="badge-outline">{recap.sentiment_score}/100 connection</span>
+                  </div>
+
+                  {/* Headline */}
+                  <h3 className="text-2xl font-bold leading-tight" style={{ fontFamily: 'Syne' }}>
+                    {recap.headline}
+                  </h3>
+
+                  {/* Common Interests */}
+                  {recap.common_interests?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Common Ground</p>
+                      <div className="flex flex-wrap gap-2">
+                        {recap.common_interests.map((i, idx) => (
+                          <span key={idx} className="badge-outline">{i}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Memorable Moments */}
+                  {recap.memorable_moments?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Memorable Moments</p>
+                      <ul className="space-y-2">
+                        {recap.memorable_moments.map((m, idx) => (
+                          <li key={idx} className="text-sm bg-[#FFF4E6] border-2 border-black rounded-lg p-3">
+                            &ldquo;{m}&rdquo;
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Compatibility Signals */}
+                  {recap.compatibility_signals?.length > 0 && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">Why This Could Work</p>
+                      <ul className="space-y-1">
+                        {recap.compatibility_signals.map((s, idx) => (
+                          <li key={idx} className="text-sm flex items-start gap-2">
+                            <Check className="w-4 h-4 text-[#00CC66] flex-shrink-0 mt-0.5" />
+                            <span>{s}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Next Step */}
+                  {recap.next_step_suggestion && (
+                    <div className="bg-[#CCFF00] border-2 border-black rounded-lg p-4">
+                      <p className="text-xs font-bold uppercase tracking-wider mb-1">Try This Next</p>
+                      <p className="font-bold">{recap.next_step_suggestion}</p>
+                    </div>
+                  )}
+
+                  {/* Growth Area */}
+                  {recap.growth_area && (
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">Go Deeper</p>
+                      <p className="text-sm text-gray-700">{recap.growth_area}</p>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex gap-2 pt-2">
+                    <button onClick={shareRecap} className="btn-primary flex-1" data-testid="share-recap-btn">
+                      Share
+                    </button>
+                    <button onClick={refreshRecap} className="btn-secondary" data-testid="refresh-recap-btn">
+                      Refresh
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-400 text-center">Generated from {recap.message_count_at_generation} messages • AI by Spark</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -50,6 +50,7 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
   - Compatibility scoring with persisted insights & challenge
   - Profile-specific icebreakers (no longer hardcoded fallback)
   - Location-aware date ideas
+  - **Date Vault**: shareable AI recap of the conversation (unlocks at 10 messages) — vibe, headline, sentiment score, common interests, memorable moments, compatibility signals, next step suggestion, growth area
   - Fixed: `extract_json()` helper handles markdown-wrapped responses
 - **Real-time Chat (WebSockets)** at `/api/ws/chat/{match_id}?token=<jwt>`:
   - Instant message delivery to peer
