@@ -58,6 +58,18 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
   - Leaderboard (top 10 + my_rank) + history (50 latest)
 - 20/20 backend tests pass + 5/5 frontend routes — zero critical issues (iter 8)
 
+### Phase 7 — Push + Photo Uploads + Cron (Feb 2026) ✅
+- **Web Push Notifications** — self-hosted VAPID, service worker, subscribe/unsubscribe + test push
+  - Auto-fires on new match, new message, post-date checkin near alert, Monday weekly challenge nudge
+  - 410 Gone subscriptions auto-deactivated
+- **Photo Uploads** — Emergent Object Storage (uses EMERGENT_LLM_KEY)
+  - POST `/api/profile/photo/upload` (multipart, 5MB max, JPEG/PNG/WebP)
+  - GET `/api/files/{path}` streams bytes, DELETE soft-deletes from photos[]
+  - Frontend `/photos` page with MAIN badge + trash
+- **APScheduler Cron Worker** — runs every 5 min: `_sweep_post_date_alerts` for ALL users (no auth context needed)
+  - Monday 09:00 UTC: weekly challenge push to all users active in last 30 days
+- 16/16 backend tests pass + 3/3 frontend routes — zero critical issues (iter 9)
+
 ## Prioritized Backlog
 
 ### P0
@@ -66,17 +78,17 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - [x] Weekly Spark Challenge with XP + badges ✅ (Feb 2026)
 
 ### P1
-- [ ] **Refactor App.js (4100+ lines) into pages/components** — recurring debt
-- [ ] **Refactor server.py (2870+ lines) into routers/** — recurring debt
-- [ ] Cron worker for /safety/run-post-date-alerts (currently caller-triggered)
+- [ ] **Refactor App.js (4200+ lines) into pages/components** — recurring debt
+- [ ] **Refactor server.py (3550+ lines) into routers/** — recurring debt
+- [x] Cron worker for /safety/run-post-date-alerts ✅ (Feb 2026)
 - [ ] Real third-party background check (Checkr / IDology) integration
 - [ ] Vision selfie verify — attach actual ImageContent blocks (currently text-only heuristic)
 - [ ] TTL index on `location_shares.expires_at`
 - [ ] Voice note storage → S3/object storage (currently inline base64)
+- [x] Photo uploads via Emergent Object Storage ✅ (Feb 2026)
 
 ### P2
-- [ ] Push notifications
-- [ ] Profile photo upload (currently URLs)
+- [x] Push notifications ✅ (Feb 2026)
 - [ ] Video date feature (in-app calls)
 - [ ] Profile activity status (last active)
 - [ ] Advanced filters (height, education, etc.)
