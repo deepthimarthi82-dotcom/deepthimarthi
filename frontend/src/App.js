@@ -2593,7 +2593,7 @@ const SubscriptionPage = () => {
     if (sessionId) {
       pollPaymentStatus(sessionId);
     }
-  }, [token, searchParams]);
+  }, [token, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pollPaymentStatus = async (sessionId, attempts = 0) => {
     if (attempts >= 5) {
@@ -2765,7 +2765,7 @@ const SubscriptionPage = () => {
 const SettingsPage = () => {
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
-  const { token, logout } = useAuth();
+  const { token, logout, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {

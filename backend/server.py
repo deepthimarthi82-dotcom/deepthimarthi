@@ -993,7 +993,7 @@ async def get_likes(user: dict = Depends(get_current_user)):
             matched_ids.add(m["user1_id"])
             matched_ids.add(m["user2_id"])
         
-        unmatched_likes = [l for l in likes if l["swiper_id"] not in matched_ids]
+        unmatched_likes = [lk for lk in likes if lk["swiper_id"] not in matched_ids]
         
         return {"count": len(unmatched_likes), "is_premium_feature": True, "likes": []}
     
