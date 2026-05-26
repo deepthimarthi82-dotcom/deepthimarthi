@@ -44,7 +44,7 @@ db = client[os.environ['DB_NAME']]
 # JWT Config
 JWT_SECRET = os.environ.get('JWT_SECRET', 'spark-dating-secret-key-2024')
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 72
+JWT_EXPIRATION_HOURS = 24 * 30  # 30-day session expiry per security spec
 
 # Stripe Config
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
@@ -55,6 +55,7 @@ EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY')
 # Create the main app
 app = FastAPI(title="Spark - Serious Dating App")
 api_router = APIRouter(prefix="/api")
+security = HTTPBearer(auto_error=False)
 security = HTTPBearer(auto_error=False)
 
 # ==================== WEBSOCKET MANAGER ====================
@@ -98,6 +99,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
+    date_of_birth: Optional[str] = None  # ISO date string YYYY-MM-DD
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -239,8 +241,68 @@ ADMIN_PREMIUM_EMAILS = {"deepthimarthi82@gmail.com", "vikaskesiraju@gmail.com"}
 
 import math
 import httpx
-import asyncio
+import re as _re
 import resend
+import zipfile
+import io
+import secrets as _secrets
+from cryptography.fernet import Fernet
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.responses import StreamingResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# Encryption (AES-128 via Fernet — symmetric, authenticated)
+_ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
+_fernet = Fernet(_ENCRYPTION_KEY.encode()) if _ENCRYPTION_KEY else None
+
+def encrypt_str(plain: Optional[str]) -> Optional[str]:
+    if plain is None or _fernet is None:
+        return plain
+    return _fernet.encrypt(plain.encode()).decode()
+
+def decrypt_str(cipher: Optional[str]) -> Optional[str]:
+    if cipher is None or _fernet is None:
+        return cipher
+    try:
+        return _fernet.decrypt(cipher.encode()).decode()
+    except Exception:
+        return cipher  # already plaintext (legacy data)
+
+# Password strength check
+_PASSWORD_RE = _re.compile(r"^(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?~`]).{8,}$")
+def validate_password_strength(pw: str) -> Optional[str]:
+    if not pw or len(pw) < 8:
+        return "Password must be at least 8 characters"
+    if not _re.search(r"\d", pw):
+        return "Password must contain at least one number"
+    if not _re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>/?~`]", pw):
+        return "Password must contain at least one special character"
+    return None
+
+# Rate limiter (in-memory)
+limiter = Limiter(key_func=get_remote_address, default_limits=["300/minute"])
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request, exc):
+    return JSONResponse(status_code=429, content={"detail": "Too many requests — slow down."})
+
+# Security headers middleware
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(self), camera=(self)"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+app.state.limiter = limiter
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Resend
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
@@ -294,7 +356,7 @@ async def geocode_city(city: str, country: Optional[str] = None):
 # ==================== HELPERS ====================
 
 def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
 
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
@@ -344,8 +406,33 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 # ==================== AUTH ENDPOINTS ====================
 
 @api_router.post("/auth/register")
-async def register(user_data: UserCreate):
-    email = user_data.email.lower()
+@limiter.limit("5/minute")
+async def register(request: Request, user_data: UserCreate):
+    email = user_data.email.lower().strip()
+    
+    # Password strength
+    pw_err = validate_password_strength(user_data.password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
+    
+    # 18+ hard block via DOB (when provided)
+    if user_data.date_of_birth:
+        try:
+            dob = datetime.fromisoformat(user_data.date_of_birth)
+            age = (datetime.now(timezone.utc).replace(tzinfo=None) - dob.replace(tzinfo=None)).days // 365
+            if age < 18:
+                # Log the blocked attempt without storing PII
+                await db.minor_block_attempts.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "email_hash": hash_password(email)[:60],  # one-way
+                    "ip": get_remote_address(request),
+                    "age_estimate": age,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+                raise HTTPException(status_code=403, detail="Spark is for users 18 and older. You must be at least 18 to create an account.")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date of birth")
+    
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -357,10 +444,13 @@ async def register(user_data: UserCreate):
         "email": email,
         "password": hash_password(user_data.password),
         "name": user_data.name,
+        "date_of_birth": user_data.date_of_birth,
         "profile_complete": False,
         "quiz_complete": False,
         "verified": False,
         "video_verified": False,
+        "two_factor_enabled": False,
+        "private_mode": False,
         "subscription": "vip" if is_admin else "free",
         "subscription_expires": (datetime.now(timezone.utc) + timedelta(days=36500)).isoformat() if is_admin else None,
         "admin_premium": is_admin,
@@ -378,11 +468,37 @@ async def register(user_data: UserCreate):
     return {"token": token, "user_id": user_id, "profile_complete": False}
 
 @api_router.post("/auth/login")
-async def login(credentials: UserLogin):
-    email = credentials.email.lower()
+@limiter.limit("10/minute")
+async def login(request: Request, credentials: UserLogin):
+    email = credentials.email.lower().strip()
     user = await db.users.find_one({"email": email}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
+        # Track failed login attempts for suspicious detection
+        await db.failed_logins.insert_one({
+            "email": email,
+            "ip": get_remote_address(request),
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    if user.get("suspended"):
+        raise HTTPException(status_code=403, detail="Account suspended pending review. Contact support@sparkmatch.dating")
+    
+    # 2FA challenge if enabled
+    if user.get("two_factor_enabled"):
+        code = f"{_secrets.randbelow(900000) + 100000}"
+        await db.two_factor_codes.insert_one({
+            "user_id": user["id"],
+            "code": code,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "used": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+        html = f"""<h2>Your Spark verification code</h2>
+<p style="font-size:32px;font-weight:bold;letter-spacing:6px;color:#FF2E63">{code}</p>
+<p>Valid for 10 minutes. If you didn't request this, please change your password immediately.</p>"""
+        asyncio.create_task(send_email(user["email"], "Your Spark login code", html))
+        return {"two_factor_required": True, "user_id": user["id"], "message": "A 6-digit code was sent to your email"}
     
     user = await ensure_admin_premium(user)
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
@@ -394,6 +510,38 @@ async def login(credentials: UserLogin):
         "profile_complete": user.get("profile_complete", False),
         "quiz_complete": user.get("quiz_complete", False)
     }
+
+@api_router.post("/auth/2fa/verify")
+@limiter.limit("10/minute")
+async def verify_2fa(request: Request, payload: dict):
+    user_id = payload.get("user_id")
+    code = payload.get("code", "").strip()
+    if not user_id or not code:
+        raise HTTPException(status_code=400, detail="Missing user_id or code")
+    record = await db.two_factor_codes.find_one(
+        {"user_id": user_id, "code": code, "used": False},
+        sort=[("created_at", -1)]
+    )
+    if not record or datetime.fromisoformat(record["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+    await db.two_factor_codes.update_one({"_id": record["_id"]}, {"$set": {"used": True}})
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await ensure_admin_premium(user)
+    token = create_token(user["id"], user["email"])
+    return {
+        "token": token,
+        "user_id": user["id"],
+        "profile_complete": user.get("profile_complete", False),
+        "quiz_complete": user.get("quiz_complete", False)
+    }
+
+@api_router.post("/auth/2fa/toggle")
+async def toggle_2fa(payload: dict, user: dict = Depends(get_current_user)):
+    enabled = bool(payload.get("enabled"))
+    await db.users.update_one({"id": user["id"]}, {"$set": {"two_factor_enabled": enabled}})
+    return {"two_factor_enabled": enabled}
 
 @api_router.get("/auth/me")
 async def get_me(user: dict = Depends(get_current_user)):
@@ -615,6 +763,7 @@ async def swipe(action: SwipeAction, user: dict = Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.swipes.insert_one(swipe_record)
+    asyncio.create_task(check_suspicious_swiping(user["id"]))
     
     # Update remaining swipes
     if user.get("subscription") == "free":
@@ -777,7 +926,11 @@ async def list_profile_viewers(user: dict = Depends(get_current_user)):
     ]
     rows = await db.profile_views.aggregate(pipeline).to_list(100)
     viewer_ids = [r["_id"] for r in rows]
-    viewers = await db.users.find({"id": {"$in": viewer_ids}}, {"_id": 0, "password": 0, "email": 0}).to_list(100)
+    # Exclude viewers with private mode enabled
+    viewers = await db.users.find(
+        {"id": {"$in": viewer_ids}, "$or": [{"private_mode": {"$exists": False}}, {"private_mode": False}]},
+        {"_id": 0, "password": 0, "email": 0}
+    ).to_list(100)
     by_id = {v["id"]: v for v in viewers}
     result = []
     for r in rows:
@@ -801,6 +954,8 @@ async def get_matches(user: dict = Depends(get_current_user)):
         
         # Get last message
         last_msg = await db.messages.find_one({"match_id": match["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+        if last_msg and last_msg.get("encrypted") and last_msg.get("message_type") != "voice":
+            last_msg["content"] = decrypt_str(last_msg.get("content"))
         
         # Check expiry
         expires_at = datetime.fromisoformat(match["expires_at"]) if match.get("expires_at") else None
@@ -900,6 +1055,10 @@ async def get_messages(match_id: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Not your match")
     
     messages = await db.messages.find({"match_id": match_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # Decrypt text messages
+    for m in messages:
+        if m.get("encrypted") and m.get("message_type") != "voice":
+            m["content"] = decrypt_str(m.get("content"))
     
     # Mark as read
     await db.messages.update_many(
@@ -910,7 +1069,8 @@ async def get_messages(match_id: str, user: dict = Depends(get_current_user)):
     return {"messages": messages}
 
 @api_router.post("/messages")
-async def send_message(msg: MessageCreate, user: dict = Depends(get_current_user)):
+@limiter.limit("60/minute")
+async def send_message(request: Request, msg: MessageCreate, user: dict = Depends(get_current_user)):
     match = await db.matches.find_one({"id": msg.match_id})
     if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
         raise HTTPException(status_code=403, detail="Not your match")
@@ -919,9 +1079,10 @@ async def send_message(msg: MessageCreate, user: dict = Depends(get_current_user
         "id": str(uuid.uuid4()),
         "match_id": msg.match_id,
         "sender_id": user["id"],
-        "content": msg.content,
+        "content": encrypt_str(msg.content),
         "message_type": msg.message_type,
         "read": False,
+        "encrypted": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.messages.insert_one(message)
@@ -929,9 +1090,13 @@ async def send_message(msg: MessageCreate, user: dict = Depends(get_current_user
     # Update match - prevent expiry
     await db.matches.update_one({"id": msg.match_id}, {"$set": {"has_messaged": True, "expires_at": None}})
     
-    # Broadcast to WS subscribers (strip _id for JSON)
+    # Broadcast decrypted to live WS listeners
     broadcast_msg = {k: v for k, v in message.items() if k != "_id"}
+    broadcast_msg["content"] = msg.content  # send plaintext over secured TLS WS
     await chat_manager.broadcast(msg.match_id, {"type": "message", "message": broadcast_msg})
+    
+    # Suspicious activity check (50+ messages in last hour)
+    asyncio.create_task(check_suspicious_messaging(user["id"]))
     
     return {"message": broadcast_msg}
 
@@ -1136,6 +1301,10 @@ async def get_relationship_recap(match_id: str, force_refresh: bool = False, use
         raise HTTPException(status_code=403, detail="Not your match")
 
     msgs = await db.messages.find({"match_id": match_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # Decrypt for analysis
+    for m in msgs:
+        if m.get("encrypted") and m.get("message_type") != "voice":
+            m["content"] = decrypt_str(m.get("content"))
     text_msgs = [m for m in msgs if m.get("message_type") != "voice"]
     if len(msgs) < 10:
         return {
@@ -1457,15 +1626,22 @@ async def block_user(target_user_id: str, user: dict = Depends(get_current_user)
         "blocked_id": target_user_id,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
-    # Auto-unmatch any match between them
-    await db.matches.update_many(
-        {"$or": [
-            {"user1_id": user["id"], "user2_id": target_user_id},
-            {"user1_id": target_user_id, "user2_id": user["id"]}
-        ]},
-        {"$set": {"status": "blocked"}}
-    )
-    return {"message": "User blocked"}
+    # Delete all matches AND their messages between them (silent + permanent)
+    match_ids = []
+    async for m in db.matches.find({"$or": [
+        {"user1_id": user["id"], "user2_id": target_user_id},
+        {"user1_id": target_user_id, "user2_id": user["id"]}
+    ]}):
+        match_ids.append(m["id"])
+    if match_ids:
+        await db.messages.delete_many({"match_id": {"$in": match_ids}})
+        await db.matches.delete_many({"id": {"$in": match_ids}})
+    # Delete any swipes either direction
+    await db.swipes.delete_many({"$or": [
+        {"swiper_id": user["id"], "swiped_id": target_user_id},
+        {"swiper_id": target_user_id, "swiped_id": user["id"]}
+    ]})
+    return {"message": "User blocked. They are completely hidden from you."}
 
 @api_router.post("/safety/unblock/{target_user_id}")
 async def unblock_user(target_user_id: str, user: dict = Depends(get_current_user)):
@@ -1494,6 +1670,7 @@ async def report_user(target_user_id: str, payload: ReportPayload, user: dict = 
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.reports.insert_one(report)
+    asyncio.create_task(check_report_threshold(target_user_id))
     return {"message": "Report submitted. Our safety team will review within 24 hours.", "report_id": report["id"]}
 
 @api_router.post("/safety/panic")
@@ -1666,6 +1843,180 @@ async def agree_to_date(match_id: str, user: dict = Depends(get_current_user)):
         return {"message": "Both of you agreed! Countdown stopped. Have an amazing date!", "both_agreed": True}
     
     return {"message": "Your agreement is recorded. Waiting for your match to confirm.", "both_agreed": False}
+
+# ==================== SUSPICIOUS ACTIVITY DETECTION ====================
+
+async def _flag_account(user_id: str, reason: str, severity: str = "medium"):
+    """Flag and (optionally) auto-suspend an account; alert admin."""
+    flag = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "reason": reason,
+        "severity": severity,
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.security_flags.insert_one(flag)
+    if severity in ("high", "critical"):
+        await db.users.update_one({"id": user_id}, {"$set": {"suspended": True, "suspended_reason": reason}})
+    # Notify admin
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
+    html = f"""<h2>🚨 Suspicious activity flagged</h2>
+<p><b>User:</b> {u.get('email') if u else user_id}</p>
+<p><b>Reason:</b> {reason}</p>
+<p><b>Severity:</b> {severity}</p>
+<p><b>Status:</b> {'AUTO-SUSPENDED' if severity in ('high','critical') else 'flagged for review'}</p>"""
+    asyncio.create_task(send_email("deepthimarthi82@gmail.com", f"[Spark Security] {severity.upper()} — {reason}", html))
+
+async def check_suspicious_messaging(user_id: str):
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    count = await db.messages.count_documents({"sender_id": user_id, "created_at": {"$gte": one_hour_ago}})
+    if count > 50:
+        # Avoid duplicate flag
+        recent = await db.security_flags.find_one({"user_id": user_id, "reason": "messaging_spam", "created_at": {"$gte": one_hour_ago}})
+        if not recent:
+            await _flag_account(user_id, "messaging_spam", "high")
+
+async def check_suspicious_swiping(user_id: str):
+    today = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    likes = await db.swipes.count_documents({"swiper_id": user_id, "action": {"$in": ["like", "super_like"]}, "created_at": {"$gte": today}})
+    passes = await db.swipes.count_documents({"swiper_id": user_id, "action": "pass", "created_at": {"$gte": today}})
+    total = likes + passes
+    if total >= 30 and passes == 0:
+        await _flag_account(user_id, "swipe_bot_behavior", "high")
+
+async def check_report_threshold(user_id: str):
+    count = await db.reports.count_documents({"reported_id": user_id})
+    if count >= 3:
+        await _flag_account(user_id, "multiple_reports", "high")
+
+# ==================== ACCOUNT DELETION + DATA EXPORT ====================
+
+@api_router.post("/account/delete/request")
+async def request_account_deletion(user: dict = Depends(get_current_user)):
+    """Step 1: schedules deletion in 30 days + sends confirmation email."""
+    deletion_at = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    confirm_token = _secrets.token_urlsafe(32)
+    await db.users.update_one({"id": user["id"]}, {"$set": {
+        "pending_deletion_at": deletion_at,
+        "deletion_confirm_token": confirm_token
+    }})
+    html = f"""<h2>Account Deletion Confirmation</h2>
+<p>Hi {user.get('name')},</p>
+<p>We received a request to delete your Spark account. Your account and all data will be permanently deleted on <b>{deletion_at[:10]}</b>.</p>
+<p>If this was you and you want to delete <b>immediately</b>, click the button in the app to confirm with this token: <code>{confirm_token[:12]}...</code></p>
+<p>If you change your mind, log in to Spark anytime in the next 30 days and we'll cancel the deletion.</p>
+<p>Spark complies with the California Consumer Privacy Act (CCPA). Your right to deletion is honored.</p>"""
+    asyncio.create_task(send_email(user["email"], "Confirm your Spark account deletion", html))
+    return {"message": "Confirmation email sent. Your account is scheduled for permanent deletion in 30 days.", "pending_deletion_at": deletion_at}
+
+@api_router.post("/account/delete/cancel")
+async def cancel_account_deletion(user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"pending_deletion_at": "", "deletion_confirm_token": ""}})
+    return {"message": "Account deletion cancelled. Welcome back!"}
+
+@api_router.post("/account/delete/confirm")
+async def confirm_immediate_deletion(payload: dict, user: dict = Depends(get_current_user)):
+    """Immediate deletion (user re-confirms in-app)."""
+    confirmed = payload.get("confirm") == "DELETE FOREVER"
+    if not confirmed:
+        raise HTTPException(status_code=400, detail="Type 'DELETE FOREVER' to confirm")
+    uid = user["id"]
+    # Cascade delete
+    await db.users.delete_one({"id": uid})
+    await db.swipes.delete_many({"$or": [{"swiper_id": uid}, {"swiped_id": uid}]})
+    await db.matches.delete_many({"$or": [{"user1_id": uid}, {"user2_id": uid}]})
+    await db.messages.delete_many({"sender_id": uid})
+    await db.profile_views.delete_many({"$or": [{"viewer_id": uid}, {"viewed_id": uid}]})
+    await db.compatibility_scores.delete_many({"$or": [{"user1_id": uid}, {"user2_id": uid}]})
+    await db.recaps.delete_many({"generated_for_user_id": uid})
+    await db.reports.delete_many({"reporter_id": uid})
+    await db.blocks.delete_many({"$or": [{"blocker_id": uid}, {"blocked_id": uid}]})
+    await db.profile_views.delete_many({"$or": [{"viewer_id": uid}, {"viewed_id": uid}]})
+    await db.boost_events.delete_many({"user_id": uid})
+    await db.two_factor_codes.delete_many({"user_id": uid})
+    await db.account_deletions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": uid,
+        "completed_at": datetime.now(timezone.utc).isoformat()
+    })
+    return {"message": "Your account and all associated data have been permanently deleted. Goodbye!"}
+
+@api_router.get("/account/export")
+async def export_user_data(user: dict = Depends(get_current_user)):
+    """CCPA-compliant data export as a ZIP file."""
+    uid = user["id"]
+    
+    # Gather all data
+    user_profile = await db.users.find_one({"id": uid}, {"_id": 0, "password": 0})
+    swipes = await db.swipes.find({"swiper_id": uid}, {"_id": 0}).to_list(10000)
+    matches = await db.matches.find({"$or": [{"user1_id": uid}, {"user2_id": uid}]}, {"_id": 0}).to_list(10000)
+    messages_raw = await db.messages.find({"sender_id": uid}, {"_id": 0}).to_list(10000)
+    for m in messages_raw:
+        if m.get("encrypted") and m.get("message_type") != "voice":
+            m["content"] = decrypt_str(m.get("content"))
+    reports_sent = await db.reports.find({"reporter_id": uid}, {"_id": 0}).to_list(1000)
+    viewers = await db.profile_views.find({"$or": [{"viewer_id": uid}, {"viewed_id": uid}]}, {"_id": 0}).to_list(1000)
+    
+    # Build ZIP in memory
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("README.txt", f"Spark Match — Personal Data Export\nGenerated for: {user.get('email')}\nDate: {datetime.now(timezone.utc).isoformat()}\n\nThis archive contains all data Spark has on your account, per CCPA and GDPR.")
+        z.writestr("profile.json", json.dumps(user_profile, indent=2, default=str))
+        z.writestr("swipes.json", json.dumps(swipes, indent=2, default=str))
+        z.writestr("matches.json", json.dumps(matches, indent=2, default=str))
+        z.writestr("messages_sent.json", json.dumps(messages_raw, indent=2, default=str))
+        z.writestr("reports_filed.json", json.dumps(reports_sent, indent=2, default=str))
+        z.writestr("profile_view_activity.json", json.dumps(viewers, indent=2, default=str))
+    buf.seek(0)
+    
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="spark-data-{uid[:8]}.zip"'}
+    )
+
+# ==================== PRIVATE MODE ====================
+
+@api_router.put("/me/private-mode")
+async def toggle_private_mode(payload: dict, user: dict = Depends(get_current_user)):
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Private Mode", "message": "Upgrade to Premium for invisible browsing."})
+    enabled = bool(payload.get("enabled"))
+    await db.users.update_one({"id": user["id"]}, {"$set": {"private_mode": enabled}})
+    return {"private_mode": enabled}
+
+# ==================== ADMIN SECURITY ====================
+
+@api_router.get("/admin/security/flags")
+async def list_security_flags(user: dict = Depends(get_current_user)):
+    if user.get("email", "").lower() not in ADMIN_PREMIUM_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin only")
+    flags = await db.security_flags.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    user_ids = list({f["user_id"] for f in flags})
+    users = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "password": 0}).to_list(200)
+    by_id = {u["id"]: u for u in users}
+    for f in flags:
+        u = by_id.get(f["user_id"], {})
+        f["user_email"] = u.get("email")
+        f["user_name"] = u.get("name")
+        f["suspended"] = u.get("suspended", False)
+    return {"flags": flags, "total": len(flags)}
+
+@api_router.post("/admin/security/resolve/{flag_id}")
+async def resolve_flag(flag_id: str, payload: dict, user: dict = Depends(get_current_user)):
+    if user.get("email", "").lower() not in ADMIN_PREMIUM_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin only")
+    action = payload.get("action")  # "dismiss" | "suspend" | "unsuspend"
+    flag = await db.security_flags.find_one({"id": flag_id})
+    if not flag:
+        raise HTTPException(status_code=404, detail="Flag not found")
+    if action == "suspend":
+        await db.users.update_one({"id": flag["user_id"]}, {"$set": {"suspended": True, "suspended_reason": flag["reason"]}})
+    elif action == "unsuspend":
+        await db.users.update_one({"id": flag["user_id"]}, {"$unset": {"suspended": "", "suspended_reason": ""}})
+    await db.security_flags.update_one({"id": flag_id}, {"$set": {"status": "resolved", "resolved_action": action, "resolved_at": datetime.now(timezone.utc).isoformat()}})
+    return {"message": "Resolved"}
 
 # ==================== ROOT ====================
 

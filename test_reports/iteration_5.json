@@ -1,0 +1,67 @@
+{
+  "summary": "Iteration 5 backend security batch — 26/26 tests passed in /app/backend/tests/test_iteration5.py. Validated: password strength (8+ chars, digit, special), 18+ DOB hard block with minor_block_attempts logging + no user creation, JWT exp ~30 days, bcrypt $2b$12$ hash, Fernet message encryption at rest (DB content starts 'gAAAA', plaintext NOT in DB, decrypted on GET), 2FA toggle/login challenge/verify with replay+wrong+expired = 401, account deletion request (pending_deletion_at +30d)/cancel/confirm cascade delete with 'DELETE FOREVER' guard, CCPA ZIP export contains 7 expected files (no password leak), Private Mode 402 for free + 200 for VIP, enhanced /api/safety/block deletes matches+messages+swipes, admin /api/admin/security/flags 403 non-admin + suspend/unsuspend/dismiss actions work, security headers present (X-Content-Type-Options nosniff, X-Frame-Options DENY, HSTS), suspicious detection (messaging_spam high → auto-suspend, swipe_bot_behavior high), rate limits 5/min register & 10/min login. Discover regression OK.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/register DOB age check", "issue": "Age computed as days // 365 — leap years can off-by-one a user exactly on their 18th birthday. Use relativedelta or proper year math for production accuracy."},
+      {"endpoint": "/api/auth/2fa/toggle", "issue": "After enabling 2FA, existing JWT tokens issued BEFORE the toggle remain valid indefinitely (no session revocation). Enabling 2FA should ideally invalidate prior tokens."},
+      {"endpoint": "/api/account/delete/confirm", "issue": "Cascade deletes from sender_id only — messages SENT by other party in deleted user's matches remain orphaned with match_id pointing to a deleted match. Consider deleting by match_id of the user's matches as well."},
+      {"endpoint": "/api/auth/login", "issue": "send_email asyncio.create_task is never awaited and the task is destroyed when the request handler returns — visible as 'Task was destroyed but it is pending' warnings on shutdown. Tasks should be tracked or awaited."},
+      {"endpoint": "Encryption", "issue": "Server comment says 'AES-128 via Fernet' but Fernet uses AES-128-CBC — spec called for AES-256. Fernet's 128-bit cipher is fine for production but doesn't match the AES-256 wording in the spec. Either update the spec/comment or migrate to AESGCM-256."},
+      {"endpoint": "Rate limiter", "issue": "slowapi in-memory limiter is per-process; with multiple worker processes (gunicorn) the effective limit would be 5*N register/min. Production should use Redis backend."},
+      {"endpoint": "/api/safety/block ip address", "issue": "Not strictly an issue — but get_remote_address behind a proxy/Cloudflare returns the proxy IP. All users on the same edge share the same rate-limit bucket. Should respect X-Forwarded-For via slowapi's forwarded_address."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "TestPasswordStrength: weak too short, no special, no digit → 400; Strong123! → 200",
+    "TestDOBBlock: minor 2015-01-01 → 403 + minor_block_attempts row + NO user; adult 1990-01-01 → 200",
+    "TestJWTExpiry: exp ~30 days from now",
+    "TestBcryptRounds: demo1 password hash starts $2b$12$",
+    "TestMessageEncryption: DB row has encrypted=true, content starts gAAAA, plaintext absent; GET decrypts back",
+    "TestTwoFactor: toggle enabled → login returns two_factor_required:true (no token), verify with code returns token; replay/wrong/expired → 401; toggle disabled cleanup",
+    "TestAccountDeletion: request → pending_deletion_at +30d in DB; cancel → unset; confirm wrong string → 400, user retained; confirm 'DELETE FOREVER' → cascades users/swipes/matches/messages",
+    "TestDataExport: 200 application/zip with profile/swipes/matches/messages_sent/reports_filed/profile_view_activity/README, no password in profile.json",
+    "TestPrivateMode: free → 402 premium_required; VIP admin → private_mode=true",
+    "TestEnhancedBlock: block deletes matches + messages + swipes (both directions)",
+    "TestAdminSecurity: non-admin → 403; admin lists flags; resolve suspend → user.suspended=true; unsuspend; dismiss → flag.status=resolved",
+    "TestSecurityHeaders: X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security present",
+    "TestSuspiciousActivity: 51 messages in <1h → messaging_spam high + auto-suspended; 30 likes 0 passes → swipe_bot_behavior high",
+    "TestRegression: GET /api/discover 200; demo2 login 200",
+    "TestZZRateLimiting: 10/min login → 429 within 25 calls; 5/min register → 429 within 15 calls"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/test_reports/pytest/iteration_5_results.xml"
+  ],
+  "action_items": [
+    "Comment in server.py line 256 says 'AES-128 via Fernet' but earlier iterations referred to AES-256 — clarify in spec/docs (Fernet uses AES-128-CBC under the hood; this is industry-standard but technically not AES-256).",
+    "Track or await fire-and-forget asyncio.create_task(send_email(...)) tasks to silence 'Task was destroyed but it is pending' warnings during pytest shutdown.",
+    "Consider session invalidation when /api/auth/2fa/toggle is flipped on (rotate JWT or bump a session-version field).",
+    "Use relativedelta (python-dateutil) instead of (days//365) for the 18+ age computation to avoid leap-year off-by-one.",
+    "Cascade delete on /api/account/delete/confirm could also remove inbound messages (any message in deleted user's matches), not just sender_id rows.",
+    "Production: move slowapi to a Redis backend so rate limits are shared across worker processes & honor X-Forwarded-For.",
+    "server.py is now 2044 lines — overdue for split (auth, safety/admin-security, account-deletion, messaging routers)."
+  ],
+  "critical_code_review_comments": [
+    "encrypt_str / decrypt_str gracefully handle legacy plaintext on decrypt (returns cipher unchanged on InvalidToken) — good for forward-compat.",
+    "send_message uses encrypt_str(msg.content); voice messages remain unencrypted (content holds URL). Spec ambiguous — confirm intent.",
+    "validate_password_strength regex includes special chars but no upper-case requirement — spec only asked digit+special, so this is correct; mentioning for visibility.",
+    "/api/admin/security/resolve does NOT validate action is one of dismiss|suspend|unsuspend — an unknown action just resolves the flag without side effects. Add an enum check.",
+    "/api/account/delete/confirm cascades delete on db.messages by sender_id — leaves orphaned recipient messages. Combined with match deletion this is mostly fine but technically inconsistent.",
+    "minor_block_attempts stores email_hash as bcrypt(email)[:60] — bcrypt has internal salt so the same email hashes differently every call; this defeats the purpose of de-duping minor signups by hashed email. Use sha256 if dedup is desired.",
+    "Suspicious-messaging window query uses ISO string lexical compare ($gte: one_hour_ago.isoformat()) — works only because timestamps are tz-aware ISO with consistent format; add an index hint.",
+    "JWT_SECRET defaults to a hardcoded string if env var missing — fine for dev but should fail-fast in production."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (new — 26 tests)",
+    "/app/test_reports/pytest/iteration_5_results.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "demo1@spark.app/password123, demo2@spark.app/password123, deepthimarthi82@gmail.com/Spark2026! (VIP admin), vikaskesiraju@gmail.com/Spark2026! (VIP admin). Temp users created during tests use bcrypt('Strong123!').",
+  "seed_data_creation": "All temp users prefixed with pw_/minor_/adult_/del*/blk*/spam_/bot_ + uuid suffix at @example.com domain and cleaned up in finally blocks. Suspicious-activity test seeds + cleans 51 messages and 30 swipes. demo1 may briefly have two_factor_enabled=true during the 2FA test but is reset to false at the end. Existing demo1<->demo2 match is touched only via a temporary message send during the encryption test — message is encrypted and remains in DB (not cleaned, but harmless).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All iter5 security features green. Run: pytest /app/backend/tests/test_iteration5.py -v. The suite takes ~80s (65s sleep for register rate-limit window between password and adult-DOB tests is unavoidable). The RATE-LIMIT tests at the END poison the in-memory bucket for 60s — wait ~70-90s before re-running this file or running any other test that hits /auth/login or /auth/register. The 'Task was destroyed but it is pending' warnings from send_email asyncio tasks are pre-existing and benign (Resend placeholder key). For iteration 6+, consider adding tests for /api/auth/2fa/verify rate limit (10/min) and account-deletion email idempotence.",
+  "mocked_apis_status": "Resend email delivery remains MOCKED via placeholder RESEND_API_KEY=re_xxxxxxxxx. 2FA codes are persisted to db.two_factor_codes even when email send fails — tests pull codes directly from DB. Account-deletion confirmation emails also fail silently — token persisted in db.users.deletion_confirm_token. Resend warning logs in supervisor are expected. MOCKED."
+}

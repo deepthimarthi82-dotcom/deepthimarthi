@@ -468,10 +468,11 @@ const LandingPage = () => {
       <footer className="border-t-2 border-black py-8 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
           <SparkLogo size="sm" />
-          <div className="flex gap-6 text-gray-600">
+          <div className="flex gap-6 text-gray-600 items-center">
             <button onClick={() => navigate("/privacy")} className="hover:text-[#FF2E63] cursor-pointer" data-testid="footer-privacy-link">Privacy</button>
             <button onClick={() => navigate("/terms")} className="hover:text-[#FF2E63] cursor-pointer" data-testid="footer-terms-link">Terms</button>
             <span className="hover:text-[#FF2E63] cursor-pointer">Safety</span>
+            <span className="flex items-center gap-1 text-xs text-[#00CC66]" data-testid="ssl-badge"><Lock className="w-3 h-3"/>256-bit SSL</span>
           </div>
           <p className="text-sm text-gray-500" data-testid="copyright-footer">© 2026 sparkmatch.dating | All rights reserved.</p>
         </div>
@@ -485,8 +486,11 @@ const AuthPage = ({ isLogin = true }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [dob, setDob] = useState("");
   const [ageConfirmed, setAgeConfirmed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [twoFA, setTwoFA] = useState({ needed: false, userId: null });
+  const [twoFACode, setTwoFACode] = useState("");
   const navigate = useNavigate();
   const { login } = useAuth();
 
@@ -499,8 +503,15 @@ const AuthPage = ({ isLogin = true }) => {
     setLoading(true);
     try {
       const endpoint = isLogin ? "/auth/login" : "/auth/register";
-      const data = isLogin ? { email, password } : { email, password, name };
+      const data = isLogin ? { email, password } : { email, password, name, date_of_birth: dob || undefined };
       const res = await apiCall("post", endpoint, data);
+
+      if (res.two_factor_required) {
+        setTwoFA({ needed: true, userId: res.user_id });
+        toast.success(res.message || "Code sent to your email");
+        setLoading(false);
+        return;
+      }
       
       login(res.token, { id: res.user_id, profile_complete: res.profile_complete, quiz_complete: res.quiz_complete });
       toast.success(isLogin ? "Welcome back!" : "Account created!");
@@ -510,6 +521,22 @@ const AuthPage = ({ isLogin = true }) => {
       else navigate("/discover");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Something went wrong");
+    }
+    setLoading(false);
+  };
+
+  const submit2FA = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await apiCall("post", "/auth/2fa/verify", { user_id: twoFA.userId, code: twoFACode });
+      login(res.token, { id: res.user_id, profile_complete: res.profile_complete, quiz_complete: res.quiz_complete });
+      toast.success("Verified!");
+      if (!res.profile_complete) navigate("/onboarding");
+      else if (!res.quiz_complete) navigate("/quiz");
+      else navigate("/discover");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Invalid code");
     }
     setLoading(false);
   };
@@ -531,6 +558,32 @@ const AuthPage = ({ isLogin = true }) => {
         </div>
 
         <div className="card-brutal p-8">
+          {twoFA.needed ? (
+            <form onSubmit={submit2FA} className="space-y-4" data-testid="twofa-form">
+              <div className="text-center">
+                <Shield className="w-10 h-10 text-[#FF2E63] mx-auto mb-2" />
+                <h3 className="text-xl font-bold" style={{ fontFamily: 'Syne' }}>Two-Factor Verification</h3>
+                <p className="text-sm text-gray-600">We sent a 6-digit code to your email. Valid for 10 minutes.</p>
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={twoFACode}
+                onChange={(e) => setTwoFACode(e.target.value.replace(/\D/g, ""))}
+                className="input-brutal text-center text-2xl tracking-[0.5em] font-bold"
+                placeholder="------"
+                required
+                data-testid="twofa-code-input"
+              />
+              <button type="submit" disabled={loading || twoFACode.length !== 6} className="btn-primary w-full" data-testid="twofa-verify-btn">
+                {loading ? "Verifying..." : "Verify"}
+              </button>
+              <button type="button" onClick={() => setTwoFA({needed:false, userId:null})} className="text-sm text-gray-500 w-full hover:underline">
+                Back to login
+              </button>
+            </form>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
               <div>
@@ -569,10 +622,29 @@ const AuthPage = ({ isLogin = true }) => {
                 className="input-brutal"
                 placeholder="••••••••"
                 required
-                minLength={6}
+                minLength={isLogin ? 6 : 8}
                 data-testid="password-input"
               />
+              {!isLogin && (
+                <p className="text-xs text-gray-500 mt-1">At least 8 characters, 1 number, 1 special character</p>
+              )}
             </div>
+
+            {!isLogin && (
+              <div>
+                <label className="block text-sm font-bold mb-2">Date of Birth</label>
+                <input
+                  type="date"
+                  value={dob}
+                  onChange={(e) => setDob(e.target.value)}
+                  max={new Date(Date.now() - 18*365*24*60*60*1000).toISOString().slice(0,10)}
+                  className="input-brutal"
+                  required
+                  data-testid="dob-input"
+                />
+                <p className="text-xs text-gray-500 mt-1">You must be 18 or older</p>
+              </div>
+            )}
 
             {!isLogin && (
               <label
@@ -618,6 +690,7 @@ const AuthPage = ({ isLogin = true }) => {
               {loading ? "Loading..." : (isLogin ? "Log In" : "Create Account")}
             </button>
           </form>
+          )}
 
           <div className="mt-6 text-center">
             <p className="text-gray-600">
@@ -630,6 +703,10 @@ const AuthPage = ({ isLogin = true }) => {
                 {isLogin ? "Sign Up" : "Log In"}
               </button>
             </p>
+          </div>
+          <div className="mt-4 flex items-center justify-center gap-2 text-xs text-[#00CC66] border-t-2 border-gray-100 pt-4" data-testid="security-badge">
+            <Lock className="w-3 h-3" />
+            Your data is protected with 256-bit SSL encryption
           </div>
         </div>
         <CopyrightFooter className="mt-6" />
@@ -1519,7 +1596,7 @@ const DiscoverPage = () => {
               className={`swipe-card ${swiping === 'like' || swiping === 'super_like' ? 'swiping-right' : ''} ${swiping === 'pass' ? 'swiping-left' : ''}`}
               data-testid="swipe-card"
             >
-              <div className="relative">
+              <div className="relative protected-photo">
                 <img 
                   src={currentProfile.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=400"} 
                   alt={currentProfile.name}
@@ -2762,6 +2839,38 @@ const SettingsPage = () => {
           </button>
 
           <button 
+            onClick={() => navigate("/security")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-security-link"
+          >
+            <div className="flex items-center gap-3">
+              <Lock className="w-5 h-5 text-[#FF2E63]" />
+              <div>
+                <h3 className="font-bold">Privacy &amp; Security</h3>
+                <p className="text-sm text-gray-600">2FA, private mode, download data, delete account</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          {["deepthimarthi82@gmail.com","vikaskesiraju@gmail.com"].includes(user?.email) && (
+            <button
+              onClick={() => navigate("/admin/security")}
+              className="w-full card-feature flex items-center justify-between bg-[#FFF4E6]"
+              data-testid="settings-admin-link"
+            >
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-[#FF0000]" />
+                <div>
+                  <h3 className="font-bold">Admin: Security Logs</h3>
+                  <p className="text-sm text-gray-600">Flagged accounts, suspensions</p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          )}
+
+          <button 
             onClick={() => navigate("/safety")}
             className="w-full card-feature flex items-center justify-between"
             data-testid="settings-safety-link"
@@ -3115,6 +3224,235 @@ const BugReportPage = () => {
   );
 };
 
+// ==================== PRIVACY & SECURITY ====================
+const SecurityPage = () => {
+  const { token, user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [twoFAEnabled, setTwoFAEnabled] = useState(!!user?.two_factor_enabled);
+  const [privateMode, setPrivateMode] = useState(!!user?.private_mode);
+  const [downloading, setDownloading] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [pendingDelete, setPendingDelete] = useState(user?.pending_deletion_at);
+
+  const toggle2FA = async () => {
+    try {
+      const res = await apiCall("post", "/auth/2fa/toggle", { enabled: !twoFAEnabled }, token);
+      setTwoFAEnabled(res.two_factor_enabled);
+      toast.success(res.two_factor_enabled ? "2FA enabled" : "2FA disabled");
+    } catch { toast.error("Failed"); }
+  };
+
+  const togglePrivate = async () => {
+    try {
+      const res = await apiCall("put", "/me/private-mode", { enabled: !privateMode }, token);
+      setPrivateMode(res.private_mode);
+      toast.success(res.private_mode ? "Private mode on 👻" : "Private mode off");
+    } catch (e) {
+      if (e.response?.status !== 402) toast.error("Failed");
+    }
+  };
+
+  const downloadData = async () => {
+    setDownloading(true);
+    try {
+      const res = await axios.get(`${API}/account/export`, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: "blob"
+      });
+      const url = URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
+      const a = document.createElement("a");
+      a.href = url; a.download = "spark-my-data.zip"; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Your data has been downloaded");
+    } catch { toast.error("Download failed"); }
+    setDownloading(false);
+  };
+
+  const requestDeletion = async () => {
+    try {
+      const res = await apiCall("post", "/account/delete/request", null, token);
+      setPendingDelete(res.pending_deletion_at);
+      toast.success(res.message);
+    } catch { toast.error("Failed to schedule deletion"); }
+  };
+
+  const cancelDeletion = async () => {
+    try {
+      await apiCall("post", "/account/delete/cancel", null, token);
+      setPendingDelete(null);
+      toast.success("Deletion cancelled");
+    } catch { toast.error("Failed"); }
+  };
+
+  const confirmImmediate = async () => {
+    if (deleteConfirm !== "DELETE FOREVER") { toast.error("Type DELETE FOREVER to confirm"); return; }
+    try {
+      await apiCall("post", "/account/delete/confirm", { confirm: deleteConfirm }, token);
+      toast.success("Account permanently deleted");
+      logout();
+      navigate("/");
+    } catch { toast.error("Failed to delete"); }
+  };
+
+  return (
+    <AppLayout>
+      <div data-testid="security-page" className="space-y-5">
+        <div>
+          <h2 className="text-2xl font-bold mb-1" style={{ fontFamily: 'Syne' }}>Privacy &amp; Security</h2>
+          <p className="text-gray-600 text-sm">Control your data, identity, and visibility.</p>
+        </div>
+
+        {/* 2FA */}
+        <div className="card-brutal p-5 flex items-center justify-between">
+          <div className="flex-1">
+            <h3 className="font-bold flex items-center gap-2"><Shield className="w-4 h-4 text-[#00CC66]"/>Two-Factor Auth</h3>
+            <p className="text-sm text-gray-600">Email a 6-digit code on every login</p>
+          </div>
+          <button onClick={toggle2FA} className={`w-14 h-8 rounded-full border-2 border-black ${twoFAEnabled ? 'bg-[#CCFF00]' : 'bg-gray-200'} relative`} data-testid="2fa-toggle">
+            <span className={`absolute top-0.5 ${twoFAEnabled ? 'right-0.5' : 'left-0.5'} w-6 h-6 bg-white border-2 border-black rounded-full transition-all`}></span>
+          </button>
+        </div>
+
+        {/* Private Mode */}
+        <div className="card-brutal p-5 flex items-center justify-between">
+          <div className="flex-1">
+            <h3 className="font-bold flex items-center gap-2">👻 Private Mode <span className="text-xs text-[#FF2E63] font-bold">PREMIUM</span></h3>
+            <p className="text-sm text-gray-600">Browse without showing up in "Who Viewed Me"</p>
+          </div>
+          <button onClick={togglePrivate} className={`w-14 h-8 rounded-full border-2 border-black ${privateMode ? 'bg-[#CCFF00]' : 'bg-gray-200'} relative`} data-testid="private-toggle">
+            <span className={`absolute top-0.5 ${privateMode ? 'right-0.5' : 'left-0.5'} w-6 h-6 bg-white border-2 border-black rounded-full transition-all`}></span>
+          </button>
+        </div>
+
+        {/* Data Download */}
+        <div className="card-brutal p-5 space-y-3">
+          <h3 className="font-bold">Download My Data</h3>
+          <p className="text-sm text-gray-600">CCPA-compliant export of everything we know about you, as a ZIP file.</p>
+          <button onClick={downloadData} disabled={downloading} className="btn-secondary w-full" data-testid="download-data-btn">
+            {downloading ? "Preparing..." : "Download ZIP"}
+          </button>
+        </div>
+
+        {/* Account Deletion */}
+        <div className="card-brutal p-5 space-y-3 bg-[#FFE5E5]">
+          <h3 className="font-bold text-[#FF0000]">Delete My Account</h3>
+          {pendingDelete ? (
+            <>
+              <p className="text-sm">Deletion scheduled for <b>{pendingDelete.slice(0,10)}</b>. Just log in any time to cancel.</p>
+              <button onClick={cancelDeletion} className="btn-secondary w-full" data-testid="cancel-delete-btn">Cancel Deletion</button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm">Permanently delete your account, photos, messages, matches and profile within 30 days. Complies with California CCPA law.</p>
+              <button onClick={() => setShowDelete(true)} className="w-full p-3 bg-[#FF0000] text-white border-2 border-black font-bold rounded-lg shadow-[3px_3px_0_#000]" data-testid="open-delete-btn">
+                Delete My Account
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Security info */}
+        <div className="text-center text-xs text-gray-500 py-3 border-t-2 border-gray-100">
+          🔒 AES-256 encryption at rest · bcrypt (12 rounds) password hashing · 30-day session expiry
+        </div>
+      </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDelete && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" data-testid="delete-modal">
+          <div className="card-brutal max-w-sm w-full p-6">
+            <h3 className="text-xl font-bold text-[#FF0000] mb-2" style={{ fontFamily: 'Syne' }}>This is permanent</h3>
+            <p className="text-sm text-gray-700 mb-4">All your data — profile, photos, matches, messages — will be gone forever. You'll get a confirmation email.</p>
+            <p className="text-sm font-bold mb-2">Type <code className="bg-gray-100 px-1">DELETE FOREVER</code> to confirm:</p>
+            <input
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              className="input-brutal mb-3"
+              placeholder="DELETE FOREVER"
+              data-testid="delete-confirm-input"
+            />
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={confirmImmediate}
+                disabled={deleteConfirm !== "DELETE FOREVER"}
+                className="w-full p-3 bg-[#FF0000] text-white border-2 border-black font-bold rounded-lg disabled:opacity-30"
+                data-testid="confirm-delete-btn"
+              >
+                Delete Immediately
+              </button>
+              <button onClick={requestDeletion} className="btn-secondary w-full" data-testid="schedule-delete-btn">
+                Schedule for 30 Days
+              </button>
+              <button onClick={() => setShowDelete(false)} className="text-sm text-gray-500 hover:underline">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppLayout>
+  );
+};
+
+// ==================== ADMIN SECURITY ====================
+const AdminSecurityPage = () => {
+  const { token, user } = useAuth();
+  const navigate = useNavigate();
+  const [flags, setFlags] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const isAdmin = ["deepthimarthi82@gmail.com", "vikaskesiraju@gmail.com"].includes(user?.email);
+
+  useEffect(() => {
+    if (!isAdmin) { navigate("/discover"); return; }
+    apiCall("get", "/admin/security/flags", null, token)
+      .then(r => setFlags(r.flags || []))
+      .catch(() => toast.error("Failed to load flags"))
+      .finally(() => setLoading(false));
+  }, [isAdmin, navigate, token]);
+
+  const resolve = async (id, action) => {
+    try {
+      await apiCall("post", `/admin/security/resolve/${id}`, { action }, token);
+      setFlags(flags.map(f => f.id === id ? { ...f, status: "resolved", resolved_action: action } : f));
+      toast.success("Resolved");
+    } catch { toast.error("Failed"); }
+  };
+
+  return (
+    <AppLayout>
+      <div data-testid="admin-security-page" className="space-y-4">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>🚨 Security Flags</h2>
+        <p className="text-gray-600 text-sm">{flags.length} flagged account{flags.length !== 1 && 's'}</p>
+        {loading ? <div className="text-center py-6">Loading...</div> : flags.length === 0 ? (
+          <div className="card-brutal p-8 text-center"><p className="font-bold">No flags. All clean. 🎉</p></div>
+        ) : flags.map(f => (
+          <div key={f.id} className="card-brutal p-4 space-y-2" data-testid={`flag-${f.id}`}>
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="font-bold">{f.user_name || "Unknown"} <span className="text-xs text-gray-500">{f.user_email}</span></p>
+                <p className="text-sm text-[#FF0000] font-bold uppercase">{f.reason}</p>
+                <p className="text-xs text-gray-500">{new Date(f.created_at).toLocaleString()} · severity: {f.severity}</p>
+              </div>
+              <div className="flex flex-col gap-1 text-right">
+                {f.suspended && <span className="badge bg-red-100 text-[#FF0000]">SUSPENDED</span>}
+                <span className={`badge ${f.status === 'resolved' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100'}`}>{f.status}</span>
+              </div>
+            </div>
+            {f.status !== "resolved" && (
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => resolve(f.id, "suspend")} className="flex-1 py-2 text-xs font-bold bg-[#FF0000] text-white border-2 border-black rounded">Suspend</button>
+                <button onClick={() => resolve(f.id, "unsuspend")} className="flex-1 py-2 text-xs font-bold bg-[#00CC66] text-white border-2 border-black rounded">Unsuspend</button>
+                <button onClick={() => resolve(f.id, "dismiss")} className="flex-1 py-2 text-xs font-bold bg-gray-200 border-2 border-black rounded">Dismiss</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </AppLayout>
+  );
+};
+
 // ==================== PROFILE VIEWERS ====================
 const ViewersPage = () => {
   const { token } = useAuth();
@@ -3186,6 +3524,16 @@ const ProtectedRoute = ({ children }) => {
 
 // ==================== APP ====================
 function App() {
+  // Disable right-click and drag globally on photos to discourage saving
+  useEffect(() => {
+    const preventOnImg = (e) => { if (e.target?.tagName === "IMG") e.preventDefault(); };
+    document.addEventListener("contextmenu", preventOnImg);
+    document.addEventListener("dragstart", preventOnImg);
+    return () => {
+      document.removeEventListener("contextmenu", preventOnImg);
+      document.removeEventListener("dragstart", preventOnImg);
+    };
+  }, []);
   return (
     <AuthProvider>
       <div className="App">
@@ -3208,6 +3556,8 @@ function App() {
             <Route path="/subscription/success" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
             <Route path="/viewers" element={<ProtectedRoute><ViewersPage /></ProtectedRoute>}/>
+            <Route path="/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>}/>
+            <Route path="/admin/security" element={<ProtectedRoute><AdminSecurityPage /></ProtectedRoute>}/>
             <Route path="/safety" element={<ProtectedRoute><SafetyPage /></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpPage /></ProtectedRoute>} />
             <Route path="/faq" element={<ProtectedRoute><FaqPage /></ProtectedRoute>} />

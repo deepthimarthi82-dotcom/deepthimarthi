@@ -4,6 +4,31 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Photo protection: disable drag/save on user-uploaded photos */
+img {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  pointer-events: auto;
+}
+
+/* Visual watermark for user photos via .protected-photo wrapper */
+.protected-photo {
+  position: relative;
+  overflow: hidden;
+}
+.protected-photo::after {
+  content: "© sparkmatch.dating";
+  position: absolute;
+  bottom: 6px; right: 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  text-shadow: 0 0 2px rgba(0,0,0,0.5);
+  pointer-events: none;
+  letter-spacing: 0.5px;
+}
+
 :root {
   --background: #FDFBF7;
   --foreground: #050505;
