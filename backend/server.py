@@ -2288,14 +2288,24 @@ async def save_my_filters(payload: FilterPreferences, user: dict = Depends(get_c
     # Validate ranges
     if "age_min" in incoming and incoming["age_min"] < 18:
         incoming["age_min"] = 18
-    if "age_max" in incoming and incoming["age_max"] > 120:
-        incoming["age_max"] = 120
+    if "age_max" in incoming and incoming["age_max"] > 99:
+        incoming["age_max"] = 99
+    if "age_min" in incoming and incoming["age_min"] > 99:
+        incoming["age_min"] = 99
+    if "age_max" in incoming and incoming["age_max"] < 18:
+        incoming["age_max"] = 18
     if "age_min" in incoming and "age_max" in incoming and incoming["age_min"] > incoming["age_max"]:
         raise HTTPException(status_code=400, detail="age_min must be ≤ age_max")
+    if "height_cm_min" in incoming and incoming["height_cm_min"] < 140:
+        incoming["height_cm_min"] = 140
+    if "height_cm_max" in incoming and incoming["height_cm_max"] > 220:
+        incoming["height_cm_max"] = 220
     if "height_cm_min" in incoming and "height_cm_max" in incoming and incoming["height_cm_min"] > incoming["height_cm_max"]:
         raise HTTPException(status_code=400, detail="height_cm_min must be ≤ height_cm_max")
     if "distance_max" in incoming and incoming["distance_max"] < 1:
         incoming["distance_max"] = 1
+    if "distance_max" in incoming and incoming["distance_max"] > 500:
+        incoming["distance_max"] = 500
     await db.users.update_one({"id": user["id"]}, {"$set": {"filters": incoming}})
     return {"filters": incoming, "is_premium": is_premium}
 
@@ -2303,6 +2313,28 @@ async def save_my_filters(payload: FilterPreferences, user: dict = Depends(get_c
 async def clear_my_filters(user: dict = Depends(get_current_user)):
     await db.users.update_one({"id": user["id"]}, {"$unset": {"filters": ""}})
     return {"filters": {}}
+
+# ==================== LOCATION (CITY SELECTOR) ====================
+
+class LocationUpdatePayload(BaseModel):
+    city: str
+    country: Optional[str] = None
+
+@api_router.put("/me/location")
+async def update_my_location(payload: LocationUpdatePayload, user: dict = Depends(get_current_user)):
+    """Update the user's city + auto-geocode lat/lng. Used by the top-bar city selector."""
+    if not payload.city or not payload.city.strip():
+        raise HTTPException(status_code=400, detail="City is required")
+    city = payload.city.strip()
+    country = (payload.country or "").strip() or None
+    lat, lng = await geocode_city(city, country)
+    update = {"location": city, "country": country, "updated_at": datetime.now(timezone.utc).isoformat()}
+    if lat is not None:
+        update["latitude"] = lat
+        update["longitude"] = lng
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {"location": city, "country": country, "latitude": lat, "longitude": lng, "geocoded": lat is not None}
+
 
 def _apply_advanced_filters_to_query(query: dict, user: dict) -> None:
     """Mutate the Mongo query with the user's advanced filters (DB-side filters only).

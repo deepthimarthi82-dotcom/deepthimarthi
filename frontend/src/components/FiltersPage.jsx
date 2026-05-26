@@ -187,7 +187,7 @@ export const FiltersPage = () => {
             onMinChange={(v) => update("age_min", v)}
             onMaxChange={(v) => update("age_max", v)}
             min={18}
-            max={120}
+            max={99}
             testidPrefix="age"
           />
           <NumRange
@@ -237,8 +237,8 @@ export const FiltersPage = () => {
             maxVal={filters.height_cm_max}
             onMinChange={(v) => update("height_cm_min", v)}
             onMaxChange={(v) => update("height_cm_max", v)}
-            min={120}
-            max={230}
+            min={140}
+            max={220}
             locked={!isPremium}
             testidPrefix="height"
           />

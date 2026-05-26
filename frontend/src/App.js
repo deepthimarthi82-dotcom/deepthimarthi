@@ -1362,9 +1362,34 @@ const QuizPage = () => {
 
 // ==================== MAIN APP LAYOUT ====================
 const AppLayout = ({ children }) => {
+  const { user, refreshUser, token } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const [showLocPicker, setShowLocPicker] = useState(false);
+  const [locCity, setLocCity] = useState("");
+  const [locCountry, setLocCountry] = useState("");
+  const [savingLoc, setSavingLoc] = useState(false);
+
+  useEffect(() => {
+    if (showLocPicker) {
+      setLocCity(user?.location || "");
+      setLocCountry(user?.country || "");
+    }
+  }, [showLocPicker, user?.location, user?.country]);
+
+  const saveLocation = async () => {
+    if (!locCity.trim()) { toast.error("Enter a city"); return; }
+    setSavingLoc(true);
+    try {
+      const res = await apiCall("put", "/me/location", { city: locCity.trim(), country: locCountry.trim() || null }, token);
+      toast.success(res.geocoded ? `Location set to ${res.location}` : `Location saved (could not geocode)`);
+      setShowLocPicker(false);
+      if (refreshUser) refreshUser();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update location");
+    }
+    setSavingLoc(false);
+  };
 
   const navItems = [
     { path: "/discover", icon: Heart, label: "Discover" },
@@ -1374,12 +1399,40 @@ const AppLayout = ({ children }) => {
   ];
 
   return (
-    <div className="min-h-screen bg-[#FDFBF7] pb-20">
+    <div className="min-h-screen bg-[#FDFBF7] pb-20 md:pb-0">
       {/* Top Header */}
-      <header className="sticky top-0 z-50 bg-[#FDFBF7] border-b-2 border-black px-6 py-4">
-        <div className="max-w-lg mx-auto flex justify-between items-center">
-          <SparkLogo size="sm" />
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-50 bg-[#FDFBF7] border-b-2 border-black px-4 sm:px-6 py-3 sm:py-4">
+        <div className="max-w-lg lg:max-w-6xl mx-auto flex justify-between items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <SparkLogo size="sm" />
+            <button
+              onClick={() => setShowLocPicker(true)}
+              className="flex items-center gap-1 px-2 py-1 border-2 border-black bg-white hover:bg-gray-100 transition-colors text-xs sm:text-sm font-bold shadow-[2px_2px_0_#000] min-w-0 max-w-[150px] sm:max-w-[240px]"
+              data-testid="location-selector-btn"
+              title="Change your city"
+            >
+              <MapPin className="w-3 h-3 sm:w-4 sm:h-4 flex-shrink-0 text-[#FF2E63]" />
+              <span className="truncate">{user?.location || "Set city"}</span>
+              <ChevronRight className="w-3 h-3 flex-shrink-0 opacity-50" />
+            </button>
+          </div>
+          {/* Desktop nav (visible on lg+) */}
+          <nav className="hidden lg:flex gap-1" data-testid="desktop-nav">
+            {navItems.map(item => {
+              const isActive = location.pathname === item.path;
+              return (
+                <button
+                  key={item.path}
+                  onClick={() => navigate(item.path)}
+                  className={`flex items-center gap-2 px-4 py-2 border-2 border-black font-bold text-sm transition ${isActive ? 'bg-[#FF2E63] text-white shadow-[3px_3px_0_#000]' : 'bg-white hover:bg-gray-100'}`}
+                  data-testid={`desktop-nav-${item.label.toLowerCase()}`}
+                >
+                  <item.icon className="w-4 h-4" /> {item.label}
+                </button>
+              );
+            })}
+          </nav>
+          <div className="flex items-center gap-2 sm:gap-3">
             {user?.subscription !== "free" && (
               <span className="badge-primary flex items-center gap-1">
                 <Crown className="w-3 h-3" /> {user?.subscription?.toUpperCase()}
@@ -1396,14 +1449,56 @@ const AppLayout = ({ children }) => {
         </div>
       </header>
 
+      {/* Location picker modal */}
+      {showLocPicker && (
+        <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4" onClick={() => setShowLocPicker(false)} data-testid="location-picker-modal">
+          <div className="bg-white border-4 border-black shadow-[8px_8px_0_rgba(0,0,0,1)] p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h2 className="font-black text-2xl">Your city</h2>
+                <p className="text-xs text-gray-600">Affects who you see and distance shown</p>
+              </div>
+              <button onClick={() => setShowLocPicker(false)} className="p-1 hover:bg-gray-100" data-testid="close-location-picker"><X className="w-5 h-5"/></button>
+            </div>
+            <label className="block text-xs font-bold mb-1">City</label>
+            <input
+              type="text"
+              value={locCity}
+              onChange={(e) => setLocCity(e.target.value)}
+              placeholder="e.g. Austin"
+              className="w-full p-3 border-4 border-black font-bold mb-3"
+              data-testid="location-city-input"
+              autoFocus
+            />
+            <label className="block text-xs font-bold mb-1">Country (optional)</label>
+            <input
+              type="text"
+              value={locCountry}
+              onChange={(e) => setLocCountry(e.target.value)}
+              placeholder="e.g. USA"
+              className="w-full p-3 border-4 border-black mb-3"
+              data-testid="location-country-input"
+            />
+            <button
+              onClick={saveLocation}
+              disabled={savingLoc}
+              className="w-full py-3 bg-[#FF2E63] text-white font-black border-4 border-black shadow-[4px_4px_0_rgba(0,0,0,1)] disabled:opacity-50"
+              data-testid="save-location-btn"
+            >
+              {savingLoc ? "Saving…" : "Save city"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
-      <main className="max-w-lg mx-auto px-4 py-6">
+      <main className="max-w-lg lg:max-w-6xl mx-auto px-4 sm:px-6 py-6">
         {children}
         <CopyrightFooter className="mt-8" />
       </main>
 
-      {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-black z-50">
+      {/* Bottom Navigation (mobile only) */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-black z-50 lg:hidden">
         <div className="max-w-lg mx-auto flex justify-around">
           {navItems.map(item => {
             const isActive = location.pathname === item.path;
@@ -1586,15 +1681,15 @@ const DiscoverPage = () => {
 
   return (
     <AppLayout>
-      <div data-testid="discover-page">
+      <div data-testid="discover-page" className="lg:max-w-2xl lg:mx-auto">
         {/* Stats Bar */}
         <div className="flex justify-between items-center mb-4">
           <div className="flex gap-2 flex-wrap">
-            <span className="badge-outline flex items-center gap-1">
-              <Heart className="w-3 h-3" /> {swipesRemaining} swipes
+            <span className="badge-outline flex items-center gap-1" data-testid="swipes-remaining">
+              <Heart className="w-3 h-3" /> {swipesRemaining >= 99999 ? "∞" : swipesRemaining} swipes
             </span>
-            <span className="badge-accent flex items-center gap-1">
-              <Star className="w-3 h-3" /> {superLikesRemaining} super
+            <span className="badge-accent flex items-center gap-1" data-testid="super-likes-remaining">
+              <Star className="w-3 h-3" /> {superLikesRemaining >= 99999 ? "∞" : superLikesRemaining} super
             </span>
             {boost.is_active && (
               <span className="px-2 py-1 bg-[#FF2E63] text-white text-xs font-bold rounded-full border-2 border-black flex items-center gap-1" data-testid="boost-countdown">
@@ -1662,7 +1757,7 @@ const DiscoverPage = () => {
                 <img 
                   src={currentProfile.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=400"} 
                   alt={currentProfile.name}
-                  className="w-full h-[400px] object-cover"
+                  className="w-full h-[400px] lg:h-[560px] object-cover"
                 />
                 {/* Gradient Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
