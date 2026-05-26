@@ -1,147 +1,115 @@
 # Spark - Serious Dating App PRD
 
 ## Original Problem Statement
-Build a modern swipe-based serious dating/matrimony app like Tinder but better for serious relationships. No nonsense, easy to navigate, mobile-friendly, funky, stylish and attractive for Gen Z and Millennials.
+Build a modern swipe-based serious dating/matrimony app like Tinder but better for serious relationships. No nonsense, easy to navigate, mobile-friendly, funky, stylish and attractive for Gen Z and Millennials. Plus: every feature missing from current dating apps — AI-powered compatibility, premium tier, safety center, transparency, wellness, AI date planning.
 
 ## Architecture & Tech Stack
 - **Frontend**: React.js with Tailwind CSS (Neo-Brutalist design)
-- **Backend**: FastAPI (Python)
+- **Backend**: FastAPI (Python), Motor (Async MongoDB), WebSockets
 - **Database**: MongoDB
 - **Payments**: Stripe (test mode)
-- **AI**: OpenAI GPT via Emergent LLM Key
+- **AI**: OpenAI GPT-4o via Emergent LLM Key
+- **Email**: Resend (placeholder API key)
+- **Security**: AES-256 message encryption at rest, bcrypt 12-rounds, SlowAPI rate-limit
 
 ## User Personas
-1. **Serious Daters (25-35)**: Looking for long-term relationships/marriage
-2. **Gen Z Users (18-25)**: Want modern, no-nonsense dating experience
-3. **Premium Users**: Willing to pay for enhanced features
-
-## Core Requirements (Static)
-- [x] User authentication (JWT-based)
-- [x] Profile creation with photos, bio, preferences
-- [x] Swipe cards (like/pass/super like)
-- [x] Match system with expiry
-- [x] Chat/messaging
-- [x] AI compatibility scoring
-- [x] AI icebreakers
-- [x] AI date ideas
-- [x] Video verification badge
-- [x] Dealbreaker filters
-- [x] Intentions badges
-- [x] Slow dating mode
-- [x] Stripe subscription (Premium/VIP tiers)
-- [x] "Who Likes You" premium feature
-- [x] Daily picks
+1. Serious Daters (25-35) — Long-term relationships / matrimony
+2. Gen Z (18-25) — Modern, no-nonsense, safety-first dating
+3. Premium subscribers — willing to pay for AI + transparency tools
 
 ## What's Been Implemented
 
-### Phase 1 - MVP Complete (Jan 2026) ✅
-- **Auth System**: Registration, login, JWT tokens
-- **Profile System**: 5-step onboarding wizard
-- **Compatibility Quiz**: 4-step quiz for better matching
-- **Discovery**: Swipe deck with profile cards
-- **Matching**: Like/Pass/Super Like with match detection
-- **Chat**: Messaging with AI icebreakers
-- **Subscriptions**: Stripe checkout for Premium ($19.99/mo) and VIP ($39.99/mo)
-- **Safety**: Date check-in feature
-- **Design**: Neo-Brutalist style with Syne/DM Sans fonts
+### Phase 1 — MVP (Jan 2026)
+- JWT auth, 5-step onboarding, swipe deck, matches, chat with AI icebreakers, Stripe checkout, Neo-Brutalist UI.
 
-### Phase 2 - Real-time & Real AI (Feb 2026) ✅
-- **Real AI** via Emergent LLM Key + GPT-4o:
-  - Compatibility scoring with persisted insights & challenge
-  - Profile-specific icebreakers (no longer hardcoded fallback)
-  - Location-aware date ideas
-  - **Date Vault**: shareable AI recap of the conversation (unlocks at 10 messages) — vibe, headline, sentiment score, common interests, memorable moments, compatibility signals, next step suggestion, growth area
-  - Fixed: `extract_json()` helper handles markdown-wrapped responses
-- **Real-time Chat (WebSockets)** at `/api/ws/chat/{match_id}?token=<jwt>`:
-  - Instant message delivery to peer
-  - Typing indicators
-  - Online/offline presence
-- **Voice Notes** via `POST /api/messages/voice` (multipart, 2MB cap, base64 data URL)
-- **Stripe Checkout** verified end-to-end (test key, real session URLs)
-- **Backend Tests**: 17 pytest cases at `/app/backend/tests/backend_test.py` — 100% passing
+### Phase 2 — Real-time + Real AI (Feb 2026)
+- Real-time WebSocket chat (`/api/ws/chat/{match_id}`)
+- GPT-4o compatibility scoring, profile-specific icebreakers, location-aware date ideas
+- Date Vault (AI recap at 10+ messages), Voice notes, full Stripe E2E
 
-### Demo Data Seeded
-- 5 demo profiles (demo1-5@spark.app, password: password123)
-- See `/app/memory/test_credentials.md` for details
+### Phase 3 — Security + Free vs Premium overhaul (Feb 2026)
+- AES-256 message encryption, bcrypt 12-rounds, SlowAPI rate-limit, 2FA UI, account deletion, photo right-click disable, DOB age-gate, Resend support ticket emails, support center, undo swipe, profile boost, viewers.
+
+### Phase 4 — Batch A: Wellness + Transparency (Feb 2026)
+- Wellness limits (30 swipes/day, take-break, mood streak with support nudge)
+- Transparency scores + badges, Profile completeness bar, Today's Spark daily pick
+- Match Anniversaries (7/30/90 day windows), Chat Health Score + AI Reignite topics
+- Growth goals, Icebreaker prompts, Anti-ghosting pledge
+- 26/26 backend tests pass (iter 6)
+
+### Phase 5 — Batch B: Trust + Safety + Personality (Feb 2026) ✅
+- **Personality DNA** (10-question Big Five test, 0-100 trait scores, archetype, 40% match weight)
+- **Post-Date Check-in** (scheduled with grace period, auto-email to emergency contact via Resend if unconfirmed)
+- **Safe Meeting Zones** (15 curated public spots + 5 first-date safety tips, optional city filter)
+- **Live Location Sharing** (per match, 15-240 min, auto-expires)
+- **Verified Photo Badge** (live selfie capture + GPT-4o compare with primary photo)
+- **Background Lite Check** (name + DOB + country, stored as sha256 hash only)
+- Discover ranking now reports `personality_score` per profile
+- 23/24 backend tests pass (iter 7) — 1 HIGH bug fixed (personality compat 404 → graceful response)
 
 ## Prioritized Backlog
 
-### P0 (Critical)
-- [x] Voice notes in chat (Feb 2026)
-- [x] Real-time chat WebSockets (Feb 2026)
-- [x] Real AI compatibility + icebreakers (Feb 2026)
-- [ ] Video date feature (in-app calls)
-- [ ] Push notifications
-- [ ] Profile photo upload (currently uses URLs)
+### P0
+- [ ] Compatibility Timeline (predicted relationship milestones)
+- [ ] First Date Script (AI-generated guide after 10 messages)
+- [ ] Weekly Spark Challenge (Monday prompts + XP/badges)
 
-### P1 (High Priority)
-- [ ] Refactor `App.js` (2154 lines) into modular components
-- [ ] Background check integration
-- [ ] Mutual friends indicator
-- [ ] Match expiry notifications
+### P1
+- [ ] **Refactor App.js (4100+ lines) into pages/components** — recurring debt
+- [ ] **Refactor server.py (2870+ lines) into routers/** — recurring debt
+- [ ] Cron worker for /safety/run-post-date-alerts (currently caller-triggered)
+- [ ] Real third-party background check (Checkr / IDology) integration
+- [ ] Vision selfie verify — attach actual ImageContent blocks (currently text-only heuristic)
+- [ ] TTL index on `location_shares.expires_at`
 - [ ] Voice note storage → S3/object storage (currently inline base64)
-- [ ] WebSocket scale-out via Redis pub/sub
-- [ ] Rate limiting on AI endpoints
 
-### P2 (Medium Priority)
-- [ ] Profile boost implementation
-- [ ] Daily picks page
-- [ ] Video verification flow (actual camera capture)
+### P2
+- [ ] Push notifications
+- [ ] Profile photo upload (currently URLs)
+- [ ] Video date feature (in-app calls)
 - [ ] Profile activity status (last active)
-
-### P3 (Nice to Have)
 - [ ] Advanced filters (height, education, etc.)
+
+### P3
 - [ ] Incognito mode
-- [ ] Read receipts (VIP feature)
-- [ ] Profile prompts
+- [ ] Read receipts (VIP)
+- [ ] Replace native datetime-local input on post-date checkin with shadcn DateTime picker
+- [ ] Fix React hydration warning on /profile routes
 
-## API Endpoints
+## Key API Endpoints (Batch B additions)
 
-### Auth
-- POST `/api/auth/register` - User registration
-- POST `/api/auth/login` - User login
-- GET `/api/auth/me` - Get current user
+### Personality DNA
+- GET `/api/personality/questions`
+- PUT `/api/personality/dna`
+- GET `/api/personality/dna/{user_id}`
+- GET `/api/personality/compatibility/{target_user_id}`
 
-### Profile
-- PUT `/api/profile` - Update profile
-- PUT `/api/profile/quiz` - Save compatibility quiz
-- GET `/api/profile/{user_id}` - Get user profile
-- POST `/api/profile/verify-video` - Video verification
+### Post-Date Safety
+- POST `/api/safety/post-date-checkin`
+- POST `/api/safety/post-date-checkin/{id}/confirm`
+- POST `/api/safety/post-date-checkin/{id}/snooze`
+- GET `/api/safety/post-date-checkins`
+- POST `/api/safety/run-post-date-alerts`
 
-### Discovery
-- GET `/api/discover` - Get profiles to swipe
-- GET `/api/discover/daily-picks` - AI-curated picks
-- POST `/api/swipe` - Record swipe action
+### Safe Zones & Location
+- GET `/api/safety/zones?city=`
+- POST `/api/safety/share-location`
+- GET `/api/safety/share-location/{match_id}`
+- DELETE `/api/safety/share-location/{match_id}`
 
-### Matches & Chat
-- GET `/api/matches` - Get user's matches
-- GET `/api/likes-you` - Who liked current user (premium)
-- GET `/api/messages/{match_id}` - Get messages
-- POST `/api/messages` - Send message
-- POST `/api/unmatch/{match_id}` - Unmatch
-
-### AI Features
-- POST `/api/ai/compatibility/{user_id}` - Calculate compatibility
-- GET `/api/ai/icebreakers/{match_id}` - Get icebreakers
-- GET `/api/ai/date-ideas` - Get date suggestions
-
-### Payments
-- GET `/api/subscription/plans` - Get plans
-- POST `/api/subscription/checkout` - Create checkout session
-- GET `/api/subscription/status/{session_id}` - Check payment
-
-### Safety
-- POST `/api/safety/checkin` - Create date check-in
-- POST `/api/safety/checkin/{id}/confirm` - Confirm safe
-
-## Next Tasks
-1. Implement voice notes in chat
-2. Add photo upload functionality
-3. Build video verification flow
-4. Add push notifications
-5. Implement profile boost feature
+### Verification
+- POST `/api/profile/selfie-verify`
+- POST `/api/profile/background-lite`
+- GET `/api/profile/badges/{user_id}`
 
 ## Revenue Model
-- **Free Tier**: 10 swipes/day, 1 super like/day
-- **Premium** ($19.99/mo or $119.99/yr): Unlimited swipes, 5 super likes, see who likes you, 1 boost/week
-- **VIP** ($39.99/mo or $239.99/yr): All Premium + unlimited super likes, 3 boosts/week, read receipts, priority support
+- **Free**: 30 swipes/day, 1 super like/day
+- **Premium** ($19.99/mo, $119.99/yr): Unlimited swipes, see likes, AI Date Planner, Vibe Check, Voice msgs, Boost
+- **VIP** ($39.99/mo, $239.99/yr): All Premium + unlimited super likes, 3 boosts/wk, read receipts, priority
+
+## Next Tasks
+1. Refactor App.js + server.py (recurring tech debt)
+2. Compatibility Timeline page
+3. First Date Script AI generator
+4. Weekly Spark Challenge with XP/badges
+5. Wire cron for post-date auto-alerts (currently manual sweeper)

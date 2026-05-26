@@ -2529,7 +2529,7 @@ def _personality_score(me_dna: dict, them_dna: dict) -> int:
 
 @api_router.get("/personality/compatibility/{target_user_id}")
 async def personality_compat(target_user_id: str, user: dict = Depends(get_current_user)):
-    target = await db.users.find_one({"id": target_user_id}, {"_id": 0, "personality_dna": 1, "personality_archetype": 1})
+    target = await db.users.find_one({"id": target_user_id}, {"_id": 0, "id": 1, "personality_dna": 1, "personality_archetype": 1})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
     me_dna = user.get("personality_dna")
@@ -2802,6 +2802,10 @@ class BackgroundLitePayload(BaseModel):
 async def background_lite_check(payload: BackgroundLitePayload, user: dict = Depends(get_current_user)):
     """Lightweight identity attestation. Stores a hashed record of the name+dob and grants a
     'Background Lite ✓' badge. Real third-party check (e.g. Checkr) can be wired here later."""
+    if not payload.full_legal_name or not payload.full_legal_name.strip():
+        raise HTTPException(status_code=400, detail="Full legal name is required")
+    if not payload.country or not payload.country.strip():
+        raise HTTPException(status_code=400, detail="Country is required")
     # Validate DOB and age
     try:
         dob = datetime.strptime(payload.date_of_birth, "%Y-%m-%d").date()
