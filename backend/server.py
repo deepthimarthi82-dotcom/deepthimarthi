@@ -119,8 +119,19 @@ class UserProfile(BaseModel):
     languages: List[str] = []  # e.g. ["English", "Spanish", "Hindi"]
     job_title: Optional[str] = None
     company: Optional[str] = None
-    education: Optional[str] = None
-    height: Optional[str] = None
+    education: Optional[str] = None  # high_school | associate | bachelor | master | doctorate | trade | other
+    height: Optional[str] = None  # legacy free-form
+    height_cm: Optional[int] = None  # numeric
+    body_type: Optional[str] = None  # slim | athletic | average | curvy | plus | other
+    drinking: Optional[str] = None  # never | rarely | socially | regularly | sober
+    smoking: Optional[str] = None  # never | sometimes | regularly | trying_to_quit
+    cannabis: Optional[str] = None  # never | sometimes | regularly
+    religion: Optional[str] = None  # christian | catholic | muslim | jewish | hindu | buddhist | spiritual | atheist | agnostic | other
+    politics: Optional[str] = None  # left | center_left | center | center_right | right | apolitical | other
+    has_kids: Optional[str] = None  # no | yes_living_with | yes_not_living_with | prefer_not_say
+    wants_kids: Optional[str] = None  # yes | no | maybe | open
+    exercise: Optional[str] = None  # daily | weekly | sometimes | rarely | never
+    pets: List[str] = []  # dog | cat | bird | reptile | fish | other | none
     intentions: Optional[str] = None
     dealbreakers: List[str] = []
     interests: List[str] = []
@@ -689,6 +700,9 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     if user.get("language_filter_enabled") and user.get("languages"):
         query["languages"] = {"$in": user["languages"]}
     
+    # Advanced filters (age range, height, education, etc.)
+    _apply_advanced_filters_to_query(query, user)
+    
     # Get potential matches
     profiles = await db.users.find(query, {"_id": 0, "password": 0, "email": 0}).limit(40).to_list(40)
     
@@ -732,6 +746,9 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
         profile["is_boosted"] = boost_active(profile)
         profile["last_active_human"] = human_last_active(profile.get("last_active"))
         profile["is_online"] = is_online_now(profile.get("last_active"))
+    
+    # Apply distance filter (post-query because distance is computed)
+    profiles = _apply_post_query_filters(profiles, user)
     
     return {
         "profiles": profiles,
@@ -2125,7 +2142,213 @@ ICEBREAKER_QUESTIONS = [
 
 @api_router.get("/options/profile-fields")
 async def get_profile_options():
-    return {"growth_goal_options": GROWTH_GOAL_OPTIONS, "icebreaker_questions": ICEBREAKER_QUESTIONS}
+    return {
+        "growth_goal_options": GROWTH_GOAL_OPTIONS,
+        "icebreaker_questions": ICEBREAKER_QUESTIONS,
+        "filter_options": ADVANCED_FILTER_OPTIONS,
+    }
+
+# ==================== ADVANCED FILTERS ====================
+
+ADVANCED_FILTER_OPTIONS = {
+    "education": [
+        {"value": "high_school", "label": "High school"},
+        {"value": "associate", "label": "Associate"},
+        {"value": "bachelor", "label": "Bachelor's"},
+        {"value": "master", "label": "Master's"},
+        {"value": "doctorate", "label": "Doctorate / PhD"},
+        {"value": "trade", "label": "Trade / vocational"},
+        {"value": "other", "label": "Other"},
+    ],
+    "body_type": [
+        {"value": "slim", "label": "Slim"},
+        {"value": "athletic", "label": "Athletic"},
+        {"value": "average", "label": "Average"},
+        {"value": "curvy", "label": "Curvy"},
+        {"value": "plus", "label": "Plus"},
+        {"value": "other", "label": "Other"},
+    ],
+    "drinking": [
+        {"value": "never", "label": "Never"},
+        {"value": "rarely", "label": "Rarely"},
+        {"value": "socially", "label": "Socially"},
+        {"value": "regularly", "label": "Regularly"},
+        {"value": "sober", "label": "Sober"},
+    ],
+    "smoking": [
+        {"value": "never", "label": "Never"},
+        {"value": "sometimes", "label": "Sometimes"},
+        {"value": "regularly", "label": "Regularly"},
+        {"value": "trying_to_quit", "label": "Trying to quit"},
+    ],
+    "cannabis": [
+        {"value": "never", "label": "Never"},
+        {"value": "sometimes", "label": "Sometimes"},
+        {"value": "regularly", "label": "Regularly"},
+    ],
+    "religion": [
+        {"value": "christian", "label": "Christian"},
+        {"value": "catholic", "label": "Catholic"},
+        {"value": "muslim", "label": "Muslim"},
+        {"value": "jewish", "label": "Jewish"},
+        {"value": "hindu", "label": "Hindu"},
+        {"value": "buddhist", "label": "Buddhist"},
+        {"value": "spiritual", "label": "Spiritual"},
+        {"value": "atheist", "label": "Atheist"},
+        {"value": "agnostic", "label": "Agnostic"},
+        {"value": "other", "label": "Other"},
+    ],
+    "politics": [
+        {"value": "left", "label": "Left"},
+        {"value": "center_left", "label": "Center-left"},
+        {"value": "center", "label": "Center"},
+        {"value": "center_right", "label": "Center-right"},
+        {"value": "right", "label": "Right"},
+        {"value": "apolitical", "label": "Apolitical"},
+        {"value": "other", "label": "Other"},
+    ],
+    "has_kids": [
+        {"value": "no", "label": "No kids"},
+        {"value": "yes_living_with", "label": "Has kids (living with)"},
+        {"value": "yes_not_living_with", "label": "Has kids (not living with)"},
+        {"value": "prefer_not_say", "label": "Prefer not to say"},
+    ],
+    "wants_kids": [
+        {"value": "yes", "label": "Wants kids"},
+        {"value": "no", "label": "Doesn't want kids"},
+        {"value": "maybe", "label": "Maybe"},
+        {"value": "open", "label": "Open to it"},
+    ],
+    "exercise": [
+        {"value": "daily", "label": "Daily"},
+        {"value": "weekly", "label": "Weekly"},
+        {"value": "sometimes", "label": "Sometimes"},
+        {"value": "rarely", "label": "Rarely"},
+        {"value": "never", "label": "Never"},
+    ],
+    "pets": [
+        {"value": "dog", "label": "Dog"},
+        {"value": "cat", "label": "Cat"},
+        {"value": "bird", "label": "Bird"},
+        {"value": "reptile", "label": "Reptile"},
+        {"value": "fish", "label": "Fish"},
+        {"value": "other", "label": "Other"},
+        {"value": "none", "label": "None"},
+    ],
+}
+
+ADVANCED_FILTER_KEYS = list(ADVANCED_FILTER_OPTIONS.keys())  # education, body_type, drinking, ...
+
+class FilterPreferences(BaseModel):
+    """User's saved discover filter prefs. Premium gates advanced fields."""
+    # Always available (free)
+    age_min: Optional[int] = None
+    age_max: Optional[int] = None
+    distance_max: Optional[int] = None  # in the user's chosen unit (mi or km)
+    recently_active_only: Optional[bool] = None  # active within last 24h
+    # Premium
+    height_cm_min: Optional[int] = None
+    height_cm_max: Optional[int] = None
+    education: List[str] = []
+    body_type: List[str] = []
+    drinking: List[str] = []
+    smoking: List[str] = []
+    cannabis: List[str] = []
+    religion: List[str] = []
+    politics: List[str] = []
+    has_kids: List[str] = []
+    wants_kids: List[str] = []
+    exercise: List[str] = []
+    pets: List[str] = []
+    must_be_verified: Optional[bool] = None  # photo_verified OR video_verified
+    must_have_personality_dna: Optional[bool] = None
+
+FREE_FILTER_KEYS = {"age_min", "age_max", "distance_max", "recently_active_only"}
+
+@api_router.get("/me/filters")
+async def get_my_filters(user: dict = Depends(get_current_user)):
+    return {
+        "filters": user.get("filters") or {},
+        "is_premium": user.get("subscription", "free") != "free",
+        "advanced_keys": [k for k in ADVANCED_FILTER_KEYS] + ["height_cm_min", "height_cm_max", "must_be_verified", "must_have_personality_dna"],
+        "free_keys": list(FREE_FILTER_KEYS),
+    }
+
+@api_router.put("/me/filters")
+async def save_my_filters(payload: FilterPreferences, user: dict = Depends(get_current_user)):
+    """Save filter prefs. Free users can save base filters; premium fields are silently ignored
+    (or rejected) for free users to keep UX clear."""
+    is_premium = user.get("subscription", "free") != "free"
+    incoming = payload.model_dump(exclude_none=True)
+    # Strip empty lists so we don't persist clutter
+    incoming = {k: v for k, v in incoming.items() if not (isinstance(v, list) and len(v) == 0)}
+    if not is_premium:
+        # Drop premium-only keys silently — UI will gate them too
+        incoming = {k: v for k, v in incoming.items() if k in FREE_FILTER_KEYS}
+    # Validate ranges
+    if "age_min" in incoming and incoming["age_min"] < 18:
+        incoming["age_min"] = 18
+    if "age_max" in incoming and incoming["age_max"] > 120:
+        incoming["age_max"] = 120
+    if "age_min" in incoming and "age_max" in incoming and incoming["age_min"] > incoming["age_max"]:
+        raise HTTPException(status_code=400, detail="age_min must be ≤ age_max")
+    if "height_cm_min" in incoming and "height_cm_max" in incoming and incoming["height_cm_min"] > incoming["height_cm_max"]:
+        raise HTTPException(status_code=400, detail="height_cm_min must be ≤ height_cm_max")
+    if "distance_max" in incoming and incoming["distance_max"] < 1:
+        incoming["distance_max"] = 1
+    await db.users.update_one({"id": user["id"]}, {"$set": {"filters": incoming}})
+    return {"filters": incoming, "is_premium": is_premium}
+
+@api_router.delete("/me/filters")
+async def clear_my_filters(user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"filters": ""}})
+    return {"filters": {}}
+
+def _apply_advanced_filters_to_query(query: dict, user: dict) -> None:
+    """Mutate the Mongo query with the user's advanced filters (DB-side filters only).
+    Distance and recently-active filters that need computation are applied post-query."""
+    f = user.get("filters") or {}
+    is_premium = user.get("subscription", "free") != "free"
+    # Age
+    age_min = f.get("age_min")
+    age_max = f.get("age_max")
+    if age_min or age_max:
+        age_q = {}
+        if age_min: age_q["$gte"] = age_min
+        if age_max: age_q["$lte"] = age_max
+        query["age"] = age_q
+    # Recently active
+    if f.get("recently_active_only"):
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        query["last_active"] = {"$gte": cutoff}
+    if not is_premium:
+        return
+    # Premium-only advanced filters
+    if f.get("height_cm_min") or f.get("height_cm_max"):
+        h = {}
+        if f.get("height_cm_min"): h["$gte"] = f["height_cm_min"]
+        if f.get("height_cm_max"): h["$lte"] = f["height_cm_max"]
+        query["height_cm"] = h
+    for field in ["education", "body_type", "drinking", "smoking", "cannabis", "religion", "politics", "has_kids", "wants_kids", "exercise"]:
+        vals = f.get(field) or []
+        if vals:
+            query[field] = {"$in": vals}
+    pets = f.get("pets") or []
+    if pets:
+        query["pets"] = {"$elemMatch": {"$in": pets}}
+    if f.get("must_be_verified"):
+        query["$and"] = query.get("$and", []) + [{"$or": [{"photo_verified": True}, {"video_verified": True}, {"selfie_verified": True}]}]
+    if f.get("must_have_personality_dna"):
+        query["personality_complete"] = True
+
+def _apply_post_query_filters(profiles: list, user: dict) -> list:
+    """Apply filters that need computed values (distance)."""
+    f = user.get("filters") or {}
+    dmax = f.get("distance_max")
+    if dmax is not None and user.get("latitude") is not None and user.get("longitude") is not None:
+        profiles = [p for p in profiles if (p.get("distance") is None or p.get("distance") <= dmax)]
+    return profiles
+
 
 @api_router.put("/me/growth-goals")
 async def save_growth_goals(payload: GrowthGoalsPayload, user: dict = Depends(get_current_user)):

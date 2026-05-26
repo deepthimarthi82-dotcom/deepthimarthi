@@ -1,0 +1,78 @@
+{
+  "summary": "Iteration 11 — Advanced Filters (age/distance/recently-active + 11 multi-select premium chips + height + verified/DNA toggles). Backend: 17/17 pytest pass (test_iteration11.py): UserProfile new fields (height_cm/body_type/drinking/smoking/cannabis/religion/politics/has_kids/wants_kids/exercise/pets) round-trip via PUT/GET /api/profile; /api/options/profile-fields returns filter_options with all 11 keys and well-formed {value,label} arrays; GET /api/me/filters returns {filters, is_premium, advanced_keys (15), free_keys (4)} correctly for free + premium; PUT as FREE drops premium fields (verified in body + DB + GET round-trip); empty-list filters stripped (body_type=[] not persisted); PUT as PREMIUM persists all 15 advanced fields including must_have_personality_dna=False; validation: age_min>age_max→400, height_min>height_max→400; clamps verified (age_min<18→18, age_max>120→120, distance_max<1→1); DELETE unsets filters in DB and GET returns {}; /api/discover applies age range, recently_active_only (24h cutoff), and premium education=['bachelor'] filter (seeded demo2 with education=bachelor in DB). Frontend smoke (mobile 390x844): VIP login → /filters shows 'All filters unlocked ⚡' header, basics-card + section-age + section-distance + recently-active-toggle + all 11 advanced section-* testids + advanced-card + must-verified-toggle + must-dna-toggle all visible and enabled; premium-gate ABSENT; Save & Clear flows both functional ('Filters cleared' toast observed). demo1 login → /filters shows 'Basic filters — upgrade for advanced' header (note: actual text is 'Basic filters — upgrade for advanced', not 'Basics — free, upgrade for advanced' as written in the spec), premium-gate yellow banner present with upgrade-from-filters-btn, must-verified/must-dna toggles DISABLED, basics still enabled. /discover toolbar has filters-btn (count=1). No console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/me/filters", "issue": "age_min=0 (or any falsy 0) passing — Pydantic accepts but clamp logic `incoming['age_min'] < 18` would catch it. However `_apply_advanced_filters_to_query` uses `if age_min or age_max:` so a saved age_min=0 (impossible after clamp) would be ignored. Edge case is benign because clamp runs first, but the falsy-check pattern is fragile — prefer `is not None`."},
+      {"endpoint": "PUT /api/me/filters", "issue": "distance_max clamp is one-sided (<1 → 1) but no upper bound. A user could save distance_max=999999 and post-filter would do a noop comparison. Consider clamping to 500 (the UI max) to keep DB clean."},
+      {"endpoint": "PUT /api/me/filters", "issue": "must_have_personality_dna=False is persisted because `exclude_none=True` keeps False. Discover query only checks `if f.get('must_have_personality_dna')` (truthy) so False is a no-op — correct behaviour, but the DB will accumulate `must_have_personality_dna: false` entries that have no effect. Either strip falsy booleans on save or document."},
+      {"endpoint": "_apply_advanced_filters_to_query", "issue": "Uses ISO-string comparison for `last_active >= cutoff.isoformat()` — works because both sides are UTC ISO strings, but mixing string sort with datetime is fragile. Prefer storing+querying BSON datetimes (same observation as iter10)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/filters header for free user", "issues": ["Spec said header should show 'Basics — free, upgrade for advanced'; actual implementation shows 'Basic filters — upgrade for advanced'. Wording mismatch only — semantics are correct."]}
+    ]
+  },
+  "passed_tests": [
+    "TestProfileFieldsRoundTrip.test_profile_new_fields_persist — 11 new optional fields round-trip through PUT/GET /api/profile",
+    "TestProfileFieldOptions.test_filter_options_keys_and_shape — exactly 11 keys, each non-empty array of {value,label}",
+    "TestGetFilters.test_get_filters_shape_free — is_premium=false, 4 free_keys, 15 advanced_keys",
+    "TestGetFilters.test_get_filters_premium_flag — is_premium=true for VIP",
+    "TestPutFiltersFree.test_free_user_drops_premium_fields — premium keys silently dropped in response + DB + GET",
+    "TestPutFiltersFree.test_empty_list_filters_stripped — body_type=[]/education=[]/pets=[] not persisted",
+    "TestPutFiltersPremium.test_premium_persists_all — height_cm/education/must_be_verified all saved",
+    "TestPutFiltersPremium.test_premium_cleanup — DELETE works for VIP",
+    "TestFilterValidation.test_age_min_greater_than_max_400",
+    "TestFilterValidation.test_height_min_greater_than_max_400 (premium)",
+    "TestFilterValidation.test_age_min_clamps_to_18 (12→18)",
+    "TestFilterValidation.test_age_max_clamps_to_120 (999→120)",
+    "TestFilterValidation.test_distance_max_clamps_to_1 (-5→1)",
+    "TestDeleteFilters.test_delete_unsets — DB filters key removed, GET returns {}",
+    "TestDiscoverFilters.test_age_filter_excludes_out_of_range — all returned profiles 25≤age≤40",
+    "TestDiscoverFilters.test_recently_active_only_filters_old_profiles — all returned profiles last_active≥now-24h",
+    "TestDiscoverFilters.test_premium_education_filter — seeded demo2 education=bachelor, premium with education=['bachelor'] returns only matching profiles"
+  ],
+  "failed_tests": [],
+  "frontend_smoke": {
+    "premium_user": "VIP login → /filters renders. Header 'All filters unlocked' visible. basics-card + section-age + section-distance + recently-active-toggle present and enabled. advanced-card with all 11 sections (section-education, section-body-type, section-drinking, section-smoking, section-cannabis, section-religion, section-politics, section-has-kids, section-wants-kids, section-exercise, section-pets) present. must-verified-toggle + must-dna-toggle ENABLED. premium-gate ABSENT. Save & Clear both work; 'Filters cleared' green toast confirms clear flow.",
+    "free_user": "demo1 login → /filters renders. Header 'Basic filters — upgrade for advanced' visible (minor wording diff from spec). premium-gate yellow banner present with upgrade-from-filters-btn. age-min/recently-active-toggle ENABLED. must-verified-toggle + must-dna-toggle DISABLED.",
+    "discover_toolbar": "/discover has filters-btn (testid count=1).",
+    "console_errors": "None observed."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/test_reports/pytest/iteration_11_results.xml"
+  ],
+  "action_items": [
+    "(MINOR — header wording) Optional: align /filters free header wording to spec — change 'Basic filters — upgrade for advanced' to 'Basics — free, upgrade for advanced' if exact wording is needed.",
+    "(MINOR — DB hygiene) On PUT /api/me/filters, consider also stripping falsy booleans (must_be_verified=false, must_have_personality_dna=false, recently_active_only=false) since the discover query treats them as no-ops. Currently they pollute the stored filters doc.",
+    "(MINOR — robustness) In _apply_advanced_filters_to_query and save-filters validation, replace `if age_min or age_max:` patterns with `if age_min is not None or age_max is not None:` to be defensive against 0 (already clamped, but still).",
+    "(MINOR — clamp) Consider clamping distance_max to upper bound 500 (matches UI max) on save."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3841 lines — split is more overdue than ever. Filters logic (~190 lines from 2151-2350) is a perfect router extraction candidate: /app/backend/routers/filters.py.",
+    "ADVANCED_FILTER_OPTIONS is defined AFTER the /options/profile-fields endpoint (line 2143 references constant at line 2153). Works in Python because route handlers are closures evaluated at request time, but the ordering is confusing — move the constant block above the endpoint, or define endpoints after all constants.",
+    "FilterPreferences model has 18 fields — consider splitting into BaseFilters (free) and AdvancedFilters (premium) Pydantic models with a discriminator or composition. This would let FastAPI auto-document the gating in OpenAPI.",
+    "FREE_FILTER_KEYS is a set but ADVANCED_FILTER_KEYS is a list — pick one type for consistency.",
+    "_apply_advanced_filters_to_query mutates `query` in-place (side effect). Pure-function style returning a query dict would be more testable and avoid the recently-spotted `query['$and']` accumulation bug pattern.",
+    "Discover endpoint applies filters AFTER profile_complete + gender mapping but BEFORE compatibility scoring + distance — correct ordering for performance (filter first, score last). Good.",
+    "FiltersPage.jsx (299 lines) is fine size-wise; MultiSelect + NumRange + locked indicator pattern is clean. Consider extracting filter sections into a config-driven render (single map call) since 11 MultiSelects are nearly identical JSX — could shrink to ~150 lines.",
+    "DELETE /api/me/filters uses {$unset: {filters: ''}} — idempotent and clean. Good.",
+    "No rate limiting on PUT /api/me/filters — a malicious client could spam saves. Consider 1-call-per-second debounce or relying on existing API rate-limit middleware."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11.py (NEW — 17 tests, all green)",
+    "/app/test_reports/pytest/iteration_11_results.xml (NEW junit xml)",
+    "/app/test_reports/iteration_11.json (NEW — this report)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (premium: all 11 advanced testids + basics + save/clear; free: premium-gate + disabled premium toggles + enabled basics; discover: filters-btn present)"},
+  "test_credentials": "demo1@spark.app/password123 (free, used as filter author); demo2@spark.app/password123 (seeded education=bachelor in DB for premium filter test); deepthimarthi82@gmail.com/Spark2026! (VIP) — all working",
+  "seed_data_creation": "Test mutates demo2.education=bachelor in DB during TestDiscoverFilters.test_premium_education_filter. NOT restored to original — demo2 now has education=bachelor persistently. If next iteration cares, restore via mongo: db.users.update_one({email:'demo2@spark.app'}, {$unset:{education:''}}). demo1 filters and premium user filters ARE cleaned up (autouse fixture + explicit DELETEs).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_iteration11.py -v` (~7s, no LLM, no third-party). Filter endpoints at server.py lines 2268-2305 (GET/PUT/DELETE /api/me/filters); _apply_advanced_filters_to_query at 2307; _apply_post_query_filters at 2344; called from /api/discover at line 704 + 751. FilterPreferences model at line 2242; ADVANCED_FILTER_OPTIONS at 2153 (note: defined AFTER /options/profile-fields handler — works due to closure). FiltersPage.jsx is single 299-line component; route registered at App.js ~line 4202; filters-btn in Discover toolbar at App.js ~line 1606. Test mutates demo2.education=bachelor permanently — if conflicts with future tests, restore via mongo. Premium user (deepthimarthi82) auto-cleaned by the test_premium_cleanup test.",
+  "rca_of_the_issue": "No bugs found in iteration 11. All 17 backend tests + 17 frontend testid groups verified green across two user personas (free demo1 + VIP deepthimarthi82). Advanced Filters feature ships correctly: schema additions persist, /options endpoint exposes all 11 categories, /me/filters CRUD respects premium gating, validation+clamping work, /discover applies filters at both query-level (age/recently-active/education/etc.) and post-query-level (distance), empty lists are stripped, and FiltersPage UI gates premium fields correctly with a yellow upgrade banner. Only minor cleanups suggested (split server.py, strip falsy booleans on save, replace `or` truthy checks with `is not None`)."
+}

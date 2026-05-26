@@ -2,11 +2,12 @@ import React, { useState, useEffect, createContext, useContext, useCallback } fr
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import axios from "axios";
-import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause, Bell } from "lucide-react";
+import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause, Bell, Sliders } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { PersonalityDNAPage, PostDateCheckinPage, SafeZonesPage, LiveLocationSharePage, SelfieVerifyPage, BackgroundLitePage } from "./components/BatchBPages";
 import { CompatibilityTimelinePage, FirstDateScriptPage, WeeklyChallengePage } from "./components/BatchCPages";
 import { NotificationsPage, PhotoManagerPage } from "./components/NotificationsAndPhotos";
+import { FiltersPage } from "./components/FiltersPage";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -1602,6 +1603,15 @@ const DiscoverPage = () => {
             )}
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => navigate("/filters")}
+              className="px-3 py-1.5 text-xs font-bold border-2 border-black rounded-full shadow-[2px_2px_0_#000] bg-white hover:translate-y-0.5 hover:shadow-none"
+              data-testid="filters-btn"
+              title="Advanced filters"
+            >
+              <Sliders className="w-3 h-3 inline mr-1" />
+              Filters
+            </button>
             <button
               onClick={activateBoost}
               disabled={boost.is_active}
@@ -4226,6 +4236,7 @@ function App() {
             <Route path="/challenges" element={<ProtectedRoute><WeeklyChallengePage /></ProtectedRoute>} />
             <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
             <Route path="/photos" element={<ProtectedRoute><PhotoManagerPage /></ProtectedRoute>} />
+            <Route path="/filters" element={<ProtectedRoute><FiltersPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <HelpBubble />
