@@ -47,12 +47,23 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - Discover ranking now reports `personality_score` per profile
 - 23/24 backend tests pass (iter 7) — 1 HIGH bug fixed (personality compat 404 → graceful response)
 
+### Phase 6 — Batch C: Engagement & Gamification (Feb 2026) ✅
+- **Compatibility Timeline** — GPT-4o generates 6 predicted milestones per match (first call, exclusivity, etc.) with confidence ratings, cached 7d
+- **First Date Script** — Locks until 10+ messages; then GPT-4o produces openers, deeper questions, topics to avoid, venue suggestions, tone. Cached 24h
+- **Weekly Spark Challenge + XP/Levels/Badges**
+  - 12 rotating challenges, deterministic per ISO week
+  - Per-user XP, level (14 tiers), streak weeks
+  - Streak-based badges: Month of Sparks (4w), Quarter Champion (12w), Spark Year-One (52w)
+  - Level-based badges: Rising Spark (L5), Spark Pro (L10)
+  - Leaderboard (top 10 + my_rank) + history (50 latest)
+- 20/20 backend tests pass + 5/5 frontend routes — zero critical issues (iter 8)
+
 ## Prioritized Backlog
 
 ### P0
-- [ ] Compatibility Timeline (predicted relationship milestones)
-- [ ] First Date Script (AI-generated guide after 10 messages)
-- [ ] Weekly Spark Challenge (Monday prompts + XP/badges)
+- [x] Compatibility Timeline ✅ (Feb 2026)
+- [x] First Date Script ✅ (Feb 2026)
+- [x] Weekly Spark Challenge with XP + badges ✅ (Feb 2026)
 
 ### P1
 - [ ] **Refactor App.js (4100+ lines) into pages/components** — recurring debt
