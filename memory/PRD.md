@@ -70,6 +70,23 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
   - Monday 09:00 UTC: weekly challenge push to all users active in last 30 days
 - 16/16 backend tests pass + 3/3 frontend routes — zero critical issues (iter 9)
 
+### Phase 8 — TTL Index + Profile Activity Status (Feb 2026) ✅
+- TTL index `ttl_expires_at` on `location_shares.expires_at` (`expireAfterSeconds=0`); schema migrated to BSON datetime
+- Profile activity: `last_active_human` ("Active now", "Active 12m ago", "Active 3h ago", "Active 2d ago", "Active 4w ago") + `is_online` (5-min window)
+- Surfaced on `/api/discover`, `/api/profile/{id}`, `/api/matches`
+- Auto-bumped on every auth'd request via `get_current_user` (throttled 60s)
+- 17/17 backend + 2/2 frontend testid groups pass (iter 10)
+
+### Phase 9 — Advanced Filters (Feb 2026) ✅
+- 11 new profile fields: height_cm, body_type, drinking, smoking, cannabis, religion, politics, has_kids, wants_kids, exercise, pets
+- **Free filters**: age range (18-120), distance, recently-active-only
+- **Premium filters**: height range (cm), education, body type, drinking, smoking, cannabis, religion, politics, kids (has/wants), exercise, pets, "must be verified", "must have personality DNA"
+- Endpoints: `GET/PUT/DELETE /api/me/filters` with validation (age_min<=age_max, height_cm bounds, etc.)
+- Free user's PUT silently drops premium-only keys
+- `/api/discover` applies all filters (DB-side for indexable fields, post-query for computed distance)
+- Frontend `/filters` page with sticky save/clear bar + premium gate
+- 17/17 backend + 100% frontend pass (iter 11)
+
 ## Prioritized Backlog
 
 ### P0
@@ -91,7 +108,7 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - [x] Push notifications ✅ (Feb 2026)
 - [ ] Video date feature (in-app calls)
 - [x] Profile activity status (last active) ✅ (Feb 2026)
-- [ ] Advanced filters (height, education, etc.)
+- [x] Advanced filters (height, education, etc.) ✅ (Feb 2026)
 
 ### P3
 - [ ] Incognito mode
