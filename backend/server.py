@@ -515,13 +515,18 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     # Get potential matches
     profiles = await db.users.find(query, {"_id": 0, "password": 0, "email": 0}).limit(40).to_list(40)
     
-    # Sort: boosted profiles first (active boost), then by last_active desc
+    # Sort: boosted profiles first (active boost), then by last_active DESCENDING (most recent first)
     now_iso = datetime.now(timezone.utc).isoformat()
     def boost_active(p):
         bu = p.get("boost_active_until")
         return bool(bu and bu > now_iso)
-    profiles.sort(key=lambda p: (not boost_active(p), p.get("last_active") or ""), reverse=False)
-    profiles = profiles[:20]
+    profiles.sort(key=lambda p: (0 if boost_active(p) else 1, -(len(p.get("last_active") or "")), p.get("last_active") or ""), reverse=False)
+    # Re-sort the same-priority groups by last_active desc
+    boosted = [p for p in profiles if boost_active(p)]
+    others = [p for p in profiles if not boost_active(p)]
+    boosted.sort(key=lambda p: p.get("last_active") or "", reverse=True)
+    others.sort(key=lambda p: p.get("last_active") or "", reverse=True)
+    profiles = (boosted + others)[:20]
     
     # Calculate compatibility + distance for each
     distance_unit = user.get("distance_unit", "mi")
@@ -677,12 +682,6 @@ async def undo_swipe(user: dict = Depends(get_current_user)):
         ],
         "matched_at": {"$gte": last["created_at"]}
     })
-    # Restore swipe count if it was decremented
-    if user.get("subscription") == "free":
-        if last["action"] == "super_like":
-            await db.users.update_one({"id": user["id"]}, {"$inc": {"daily_super_likes_remaining": 1}})
-        else:
-            await db.users.update_one({"id": user["id"]}, {"$inc": {"daily_swipes_remaining": 1}})
     await db.swipes.delete_one({"id": last["id"]})
     return {"undone": last["swiped_id"], "action": last["action"]}
 
