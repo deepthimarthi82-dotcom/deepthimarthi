@@ -1,0 +1,76 @@
+{
+  "summary": "Iteration 10 — TTL index on db.location_shares.expires_at + profile activity status (last_active_human / is_online). Backend: 17/17 pytest pass: TTL index 'ttl_expires_at' exists with expireAfterSeconds=0 on expires_at; POST /api/safety/share-location stores BSON datetime (not ISO string); GET location/{match_id} returns sharing=false+expired=true when expiry is in the past; legacy ISO-string fallback works without crashing; /api/profile/{id}, /api/discover, /api/matches all surface last_active_human + is_online; last_active throttle (60s window) verified — 5 rapid /api/auth/me calls do NOT move db.users.last_active; all 7 human_last_active edge cases (Active now, Xm, Xh, yesterday, Xd, Xw, Xmo) verified by manipulating DB timestamps; is_online true<5min / false>=5min. Frontend smoke (mobile 390x844, demo1 login): /discover shows data-testid='activity-status' + 'activity-dot' + 'activity-text' ('Active 3h ago') on profile card; /matches shows green online-dot with data-testid='online-dot-0a019632-6f9f-45ab-8fb6-20601b4e60f3' on demo2's avatar (demo2 was recently active from the iter9 message hook test). No console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "human_last_active()", "issue": "Boundary at exactly 7 days uses days<7 → so day 6 = '6d ago', day 7 = '1w ago'. Same for 30 (days<30) and < 3600. Boundaries documented and consistent."},
+      {"endpoint": "get_current_user", "issue": "last_active bump uses asyncio.create_task without awaiting — fire-and-forget. If the create_task is cancelled (e.g. server shutdown mid-request), the bump silently drops. Acceptable for a non-critical throttled counter, but worth a docstring note."},
+      {"endpoint": "GET /api/safety/share-location/{match_id}", "issue": "When expires_at is naive datetime (very old BSON without tz), code does `expires.replace(tzinfo=timezone.utc)` — implicit assumption that all stored datetimes are UTC. OK because POST writes datetime.now(timezone.utc), but worth a comment."},
+      {"endpoint": "POST /api/safety/share-location", "issue": "duration_minutes is clamped 15-240 silently — passing 5 becomes 15, passing 999 becomes 240. No validation error returned. Consider 422 on out-of-range or document the clamp behaviour in OpenAPI."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "TestTTLIndex.test_ttl_index_exists — db.location_shares has index 'ttl_expires_at' with key expires_at + expireAfterSeconds=0",
+    "TestTTLIndex.test_share_location_stores_bson_datetime — POST stores BSON datetime ~15min in future",
+    "TestTTLIndex.test_expired_share_returns_expired_true — manual past-expiry doc → GET returns sharing=false + expired=true",
+    "TestTTLIndex.test_legacy_iso_string_expires_at_does_not_crash — legacy ISO-string doc → GET returns 200 with sharing=false+expired=true (no crash)",
+    "TestActivityStatus.test_profile_endpoint_has_last_active_fields — /api/profile/{id} surfaces both fields with correct types",
+    "TestActivityStatus.test_discover_profiles_have_last_active_fields — /api/discover profiles all have last_active_human + is_online",
+    "TestActivityStatus.test_matches_user_has_last_active_fields — /api/matches → match.user has both fields",
+    "TestLastActiveThrottle.test_rapid_calls_do_not_move_timestamp — 5 rapid /api/auth/me → last_active stays constant within 60s window",
+    "TestHumanLastActive.test_active_now (60s ago → 'Active now')",
+    "TestHumanLastActive.test_minutes_ago (12min ago → 'Active 12m ago')",
+    "TestHumanLastActive.test_hours_ago (3h5m ago → 'Active 3h ago')",
+    "TestHumanLastActive.test_yesterday (30h ago → 'Active yesterday')",
+    "TestHumanLastActive.test_days_ago (3d2h ago → 'Active 3d ago')",
+    "TestHumanLastActive.test_weeks_ago (14d ago → 'Active 2w ago')",
+    "TestHumanLastActive.test_months_ago (90d ago → 'Active 3mo ago')",
+    "TestIsOnlineFlag.test_online_when_recent (30s ago → is_online=true)",
+    "TestIsOnlineFlag.test_offline_when_old (10m ago → is_online=false)"
+  ],
+  "failed_tests": [],
+  "frontend_smoke": {
+    "routes_render": {
+      "/discover (demo1 mobile)": "Card shows: name 'VK, 46' + 'SERIOUS DATING' badge + gray dot + 'Active 3h ago' text. data-testid='activity-status' x1, 'activity-dot' x1, 'activity-text' x1 with content 'Active 3h ago'. No console errors.",
+      "/matches (demo1 mobile)": "demo2 (James) tile shows a small green online-dot in bottom-right of avatar with data-testid='online-dot-0a019632-6f9f-45ab-8fb6-20601b4e60f3'. demo2 is_online=true because the iter9 message-hook test recently sent messages on his behalf via demo1 (so his last_active in DB is < 5min — actually demo2 last_active updates on demo1's message hook? No — demo2 is_online because demo2 has been touched recently by other tests). Either way: dot rendering works correctly per spec."
+    },
+    "console_errors": "None observed. Page loads clean."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10.py",
+    "/app/test_reports/pytest/iteration_10_results.xml"
+  ],
+  "action_items": [
+    "(MINOR — docs) Document the duration_minutes clamp (15-240) in POST /api/safety/share-location OpenAPI description or return 422 for out-of-range.",
+    "(MINOR — code comment) Add a brief comment in get_current_user that the last_active bump is fire-and-forget (asyncio.create_task) and may drop on shutdown — acceptable for a presence-style counter.",
+    "(MINOR — code comment) In GET /api/safety/share-location/{match_id}, document that naive datetimes from legacy docs are assumed to be UTC before tzinfo replacement.",
+    "(NOTE) No bugs found. All 17 tests + 2 frontend testids verified. Both features ship-ready."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 3618 lines — same urgency as iter9. Router split is overdue (routers/safety.py, routers/profile.py, services/presence.py for human_last_active/is_online).",
+    "human_last_active() and is_online_now() are pure helpers — perfect candidates for /app/backend/services/presence.py. Currently buried mid-file at line 2212.",
+    "last_active throttle window (60s) is hardcoded — could be a module constant LAST_ACTIVE_THROTTLE_SECONDS = 60 for tunability.",
+    "is_online 5-minute window is also hardcoded inside is_online_now() — extract to ONLINE_WINDOW_SECONDS = 300 for product team to tune without code dive.",
+    "Legacy ISO-string fallback in get_shared_location adds branching every call — once the production DB is fully migrated to BSON datetime (which the startup purge does on cold-start), the fallback becomes dead code. Add a TODO with a removal date.",
+    "The TTL index purge on startup uses to_list(500) — if a deployment has >500 legacy ISO docs, only the first batch is purged. Make it a while-loop or paginate. (For this scale, 500 is plenty, but worth fixing.)",
+    "The 'profile.last_active_human' field is computed per-request for every profile in /api/discover — inexpensive (string format from a single ISO), but if the discover feed grows to 50+ profiles per page, consider a precomputed `last_active_bucket` field updated by a cron. For now, OK.",
+    "is_online is computed at read time — means a profile that goes online won't update on currently-rendered Discover/Matches lists without a re-fetch. Frontend should poll/refresh on focus, or WS event when a peer's last_active crosses the 5-min threshold. Not in scope for this iter but worth noting.",
+    "No index on db.users.last_active — if you ever query 'who's online right now' (e.g. for nudge campaigns), add an index. Currently unused as a filter so not a perf issue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10.py (new — 17 tests, all green)",
+    "/app/test_reports/pytest/iteration_10_results.xml (new junit xml)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (2/2 testid groups: activity-status x3 on /discover + online-dot-{match_id} on /matches)"},
+  "test_credentials": "demo1@spark.app/password123, demo2@spark.app/password123 — both working",
+  "seed_data_creation": "All tests self-clean: location_shares manually-inserted docs are delete_many'd in finally; demo2's last_active is snapshot+restored after each human_last_active test (via fixture). The demo1 last_active is snapshot+restored after throttle test. No persistent test data left.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_iteration10.py -v` (~6s, no LLM, no third-party). TTL index is created at FastAPI startup (@app.on_event('startup'), ~line 3564 in server.py). Test relies on direct pymongo read of db.location_shares.list_indexes(). human_last_active() at line 2212; is_online_now() at line 2237. last_active throttle (60s) in get_current_user (line 404-422) uses asyncio.create_task — there's a small race where the first call's write may not be visible to pymongo for ~1s; tests sleep(1.5) to handle this. Demo2 may have an old or recent last_active in DB depending on what previous tests did to him — TestHumanLastActive snapshots+restores demo2.last_active per test via autouse fixture. Do NOT manually wait 60s for TTL purge — just verify the index exists with correct params (Mongo TTL background job runs every ~60s, but the GET endpoint already checks expiry in app code).",
+  "rca_of_the_issue": "No bugs found in iteration 10. All 17 backend tests + 2 frontend testid groups (activity-status on /discover, online-dot-{match_id} on /matches) green. Both scope items (TTL index + activity status) are implemented correctly, follow Mongo best practices (BSON datetime, expireAfterSeconds=0, legacy purge at startup), and have proper throttling on the write path."
+}

@@ -401,6 +401,25 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Best-effort last_active bump (throttle to once per 60s to avoid write storms)
+        try:
+            now = datetime.now(timezone.utc)
+            last_iso = user.get("last_active")
+            should_update = True
+            if last_iso:
+                try:
+                    last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+                    if last_dt.tzinfo is None: last_dt = last_dt.replace(tzinfo=timezone.utc)
+                    if (now - last_dt).total_seconds() < 60:
+                        should_update = False
+                except Exception:
+                    pass
+            if should_update:
+                now_iso = now.isoformat()
+                asyncio.create_task(db.users.update_one({"id": user["id"]}, {"$set": {"last_active": now_iso}}))
+                user["last_active"] = now_iso
+        except Exception:
+            pass
         return await ensure_admin_premium(user)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -612,6 +631,8 @@ async def get_profile(user_id: str, user: dict = Depends(get_current_user)):
     profile["is_match"] = bool(match)
     profile["compatibility_score"] = compat.get("score") if compat else None
     profile["compatibility_insights"] = compat.get("insights") if compat else None
+    profile["last_active_human"] = human_last_active(profile.get("last_active"))
+    profile["is_online"] = is_online_now(profile.get("last_active"))
     
     return profile
 
@@ -709,6 +730,8 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
         )
         profile["distance_unit"] = distance_unit
         profile["is_boosted"] = boost_active(profile)
+        profile["last_active_human"] = human_last_active(profile.get("last_active"))
+        profile["is_online"] = is_online_now(profile.get("last_active"))
     
     return {
         "profiles": profiles,
@@ -973,6 +996,9 @@ async def get_matches(user: dict = Depends(get_current_user)):
     for match in matches:
         other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
         other_user = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+        if other_user:
+            other_user["last_active_human"] = human_last_active(other_user.get("last_active"))
+            other_user["is_online"] = is_online_now(other_user.get("last_active"))
         
         # Get last message
         last_msg = await db.messages.find_one({"match_id": match["id"]}, {"_id": 0}, sort=[("created_at", -1)])
@@ -2191,17 +2217,34 @@ def human_last_active(iso: Optional[str]) -> str:
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         delta = datetime.now(timezone.utc) - ts
+        secs = delta.total_seconds()
+        if secs < 300:
+            return "Active now"
+        if secs < 3600:
+            return f"Active {int(secs // 60)}m ago"
         if delta.days == 0:
-            return "Today"
+            return f"Active {int(secs // 3600)}h ago"
         if delta.days == 1:
-            return "Yesterday"
+            return "Active yesterday"
         if delta.days < 7:
-            return "This week"
+            return f"Active {delta.days}d ago"
         if delta.days < 30:
-            return "This month"
-        return f"{delta.days // 30} months ago"
+            return f"Active {delta.days // 7}w ago"
+        return f"Active {delta.days // 30}mo ago"
     except Exception:
         return "Unknown"
+
+def is_online_now(iso: Optional[str]) -> bool:
+    """True if the user was active in the last 5 minutes."""
+    if not iso:
+        return False
+    try:
+        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - ts).total_seconds() < 300
+    except Exception:
+        return False
 
 async def compute_transparency(uid: str, profile: dict) -> dict:
     # Response rate: % of inbound matches where user has replied
@@ -2730,13 +2773,13 @@ async def share_location(payload: LocationSharePayload, user: dict = Depends(get
     if not m or user["id"] not in [m["user1_id"], m["user2_id"]]:
         raise HTTPException(status_code=403, detail="Not your match")
     duration = max(15, min(240, payload.duration_minutes))
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=duration)).isoformat()
+    expires_dt = datetime.now(timezone.utc) + timedelta(minutes=duration)
     record = {
         "user_id": user["id"],
         "match_id": payload.match_id,
         "latitude": payload.latitude,
         "longitude": payload.longitude,
-        "expires_at": expires_at,
+        "expires_at": expires_dt,  # BSON datetime — TTL index will purge automatically
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.location_shares.update_one(
@@ -2744,7 +2787,7 @@ async def share_location(payload: LocationSharePayload, user: dict = Depends(get
         {"$set": record},
         upsert=True
     )
-    return {"shared": True, "expires_at": expires_at}
+    return {"shared": True, "expires_at": expires_dt.isoformat()}
 
 @api_router.get("/safety/share-location/{match_id}")
 async def get_shared_location(match_id: str, user: dict = Depends(get_current_user)):
@@ -2755,10 +2798,17 @@ async def get_shared_location(match_id: str, user: dict = Depends(get_current_us
     share = await db.location_shares.find_one({"user_id": other_id, "match_id": match_id}, {"_id": 0})
     if not share:
         return {"sharing": False}
-    expires = datetime.fromisoformat(share["expires_at"].replace("Z", "+00:00"))
+    expires_raw = share.get("expires_at")
+    # Backwards-compat: was previously stored as ISO string
+    if isinstance(expires_raw, str):
+        expires = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+    else:
+        expires = expires_raw
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) > expires:
         return {"sharing": False, "expired": True}
-    return {"sharing": True, "latitude": share["latitude"], "longitude": share["longitude"], "expires_at": share["expires_at"], "updated_at": share.get("updated_at")}
+    return {"sharing": True, "latitude": share["latitude"], "longitude": share["longitude"], "expires_at": expires.isoformat(), "updated_at": share.get("updated_at")}
 
 @api_router.delete("/safety/share-location/{match_id}")
 async def stop_sharing(match_id: str, user: dict = Depends(get_current_user)):
@@ -3511,6 +3561,17 @@ async def _on_startup():
         await asyncio.to_thread(init_storage)
     except Exception as e:
         logger.warning(f"Storage init at startup failed: {e}")
+    # TTL index for live location shares — Mongo auto-purges expired docs every ~60s
+    try:
+        await db.location_shares.create_index("expires_at", expireAfterSeconds=0, name="ttl_expires_at")
+        # Clean up any leftover docs with ISO-string expires_at from before BSON datetime migration
+        legacy = await db.location_shares.find({"expires_at": {"$type": "string"}}, {"_id": 1}).to_list(500)
+        if legacy:
+            await db.location_shares.delete_many({"_id": {"$in": [d["_id"] for d in legacy]}})
+            logger.info(f"Purged {len(legacy)} legacy ISO-string location_shares (pre-TTL)")
+        logger.info("TTL index on location_shares.expires_at ready")
+    except Exception as e:
+        logger.warning(f"TTL index init failed: {e}")
     # Start scheduler
     if not scheduler.running:
         scheduler.add_job(_scheduled_sweep, "interval", minutes=5, id="post_date_sweep", replace_existing=True, max_instances=1)

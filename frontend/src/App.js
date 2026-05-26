@@ -1688,6 +1688,13 @@ const DiscoverPage = () => {
                     <span className="badge bg-white/20 text-white">{currentProfile.intentions}</span>
                   )}
 
+                  {currentProfile.last_active_human && (
+                    <div className="mt-2 flex items-center gap-1.5" data-testid="activity-status">
+                      <span className={`inline-block w-2 h-2 rounded-full ${currentProfile.is_online ? "bg-[#00CC66]" : "bg-white/50"}`} data-testid="activity-dot"/>
+                      <span className="text-xs text-white/80 font-medium" data-testid="activity-text">{currentProfile.last_active_human}</span>
+                    </div>
+                  )}
+
                   {currentProfile.compatibility_score && (
                     <div className="mt-3 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-[#CCFF00]" />
@@ -1915,6 +1922,9 @@ const MatchesPage = () => {
                     <div className="absolute -top-1 -right-1 bg-[#CCFF00] rounded-full p-1 border-2 border-black">
                       <Star className="w-3 h-3" />
                     </div>
+                  )}
+                  {match.user?.is_online && (
+                    <span className="absolute bottom-0 right-0 w-4 h-4 bg-[#00CC66] border-2 border-white rounded-full" title="Active now" data-testid={`online-dot-${match.match_id}`}/>
                   )}
                 </div>
                 <div className="flex-1">
@@ -2295,8 +2305,8 @@ const ChatPage = () => {
               )}
             </h2>
             <p className="text-xs text-gray-500 flex items-center gap-1" data-testid="presence-indicator">
-              <span className={`w-2 h-2 rounded-full ${peerOnline ? 'bg-[#00CC66]' : 'bg-gray-300'}`} />
-              {peerOnline ? 'Online now' : 'Offline'}
+              <span className={`w-2 h-2 rounded-full ${peerOnline || match?.user?.is_online ? 'bg-[#00CC66]' : 'bg-gray-300'}`} />
+              {peerOnline ? 'Online now' : (match?.user?.last_active_human || 'Offline')}
             </p>
           </div>
           <button 
