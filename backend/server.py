@@ -253,7 +253,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.responses import StreamingResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-# Encryption (AES-128 via Fernet — symmetric, authenticated)
+# Encryption at rest (Fernet — AES-128-CBC + HMAC-SHA256, authenticated symmetric encryption)
 _ENCRYPTION_KEY = os.environ.get("ENCRYPTION_KEY", "")
 _fernet = Fernet(_ENCRYPTION_KEY.encode()) if _ENCRYPTION_KEY else None
 
@@ -2008,6 +2008,8 @@ async def resolve_flag(flag_id: str, payload: dict, user: dict = Depends(get_cur
     if user.get("email", "").lower() not in ADMIN_PREMIUM_EMAILS:
         raise HTTPException(status_code=403, detail="Admin only")
     action = payload.get("action")  # "dismiss" | "suspend" | "unsuspend"
+    if action not in ("dismiss", "suspend", "unsuspend"):
+        raise HTTPException(status_code=400, detail="Invalid action")
     flag = await db.security_flags.find_one({"id": flag_id})
     if not flag:
         raise HTTPException(status_code=404, detail="Flag not found")
