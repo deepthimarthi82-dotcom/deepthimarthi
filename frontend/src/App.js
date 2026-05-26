@@ -2,10 +2,11 @@ import React, { useState, useEffect, createContext, useContext, useCallback } fr
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import axios from "axios";
-import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause } from "lucide-react";
+import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause, Bell } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { PersonalityDNAPage, PostDateCheckinPage, SafeZonesPage, LiveLocationSharePage, SelfieVerifyPage, BackgroundLitePage } from "./components/BatchBPages";
 import { CompatibilityTimelinePage, FirstDateScriptPage, WeeklyChallengePage } from "./components/BatchCPages";
+import { NotificationsPage, PhotoManagerPage } from "./components/NotificationsAndPhotos";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -2730,6 +2731,30 @@ const ProfilePage = () => {
           </button>
 
           <button 
+            onClick={() => navigate("/photos")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="photos-link"
+          >
+            <div className="flex items-center gap-3">
+              <Camera className="w-5 h-5" />
+              <span className="font-bold">Manage photos</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/notifications")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="notifications-link"
+          >
+            <div className="flex items-center gap-3">
+              <Bell className="w-5 h-5" />
+              <span className="font-bold">Notifications</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
             onClick={() => navigate("/challenges")}
             className="w-full card-feature flex items-center justify-between bg-purple-100"
             data-testid="weekly-challenge-link"
@@ -4123,6 +4148,20 @@ const ProtectedRoute = ({ children }) => {
 
 // ==================== APP ====================
 function App() {
+  // Register service worker for push notifications + handle SW navigation events
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      const onMessage = (event) => {
+        if (event.data?.type === "navigate" && event.data?.url) {
+          window.location.href = event.data.url;
+        }
+      };
+      navigator.serviceWorker.addEventListener("message", onMessage);
+      return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+    }
+  }, []);
+
   // Disable right-click and drag globally on photos to discourage saving
   useEffect(() => {
     const preventOnImg = (e) => { if (e.target?.tagName === "IMG") e.preventDefault(); };
@@ -4175,6 +4214,8 @@ function App() {
             <Route path="/match/:matchId/timeline" element={<ProtectedRoute><CompatibilityTimelinePage /></ProtectedRoute>} />
             <Route path="/chat/:matchId/first-date-script" element={<ProtectedRoute><FirstDateScriptPage /></ProtectedRoute>} />
             <Route path="/challenges" element={<ProtectedRoute><WeeklyChallengePage /></ProtectedRoute>} />
+            <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
+            <Route path="/photos" element={<ProtectedRoute><PhotoManagerPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <HelpBubble />

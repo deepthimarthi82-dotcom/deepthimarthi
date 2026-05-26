@@ -1,0 +1,77 @@
+{
+  "summary": "Iteration 9 — Push Notifications (Web Push + VAPID), Photo Uploads (Emergent Object Storage), APScheduler cron worker. Backend: 16/16 pytest pass including round-trip upload→GET→delete→404, fake-endpoint push (returns sent>=0 cleanly), cron sweep transition checkin scheduled→alerted. Frontend smoke: /notifications shows 'Permission blocked' state correctly (headless Chrome has no notification permission), /photos shows MAIN badge + 'Choose photo' file input + 2 photos with trash icons, /profile shows photos-link AND notifications-link entry points. Backend logs show no stack traces; 'Scheduler started' + 'Emergent object storage initialized' both present at startup.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/safety/post-date-checkin", "issue": "PostDateCheckin.match_id is typed as `str` (non-Optional) — passing match_id=null gets a 422 with pydantic v2 'string_type' error. Either make it Optional[str] = None (current schema in code doesn't allow null) or document the requirement. Looking at server.py PostDateCheckin model — match_id field doesn't accept None. If the safety check-in should be allowed without a match (general 'safety walk home' use-case), make this Optional."},
+      {"endpoint": "DELETE /api/profile/photo", "issue": "Endpoint takes a JSON body via `payload: dict` — works, but loses pydantic validation. Could be tightened to a typed model (DeletePhotoPayload{url:str}). Cosmetic."},
+      {"endpoint": "GET /api/files/{path}", "issue": "Comment says 'Allow unauthenticated GET for now to keep <img> tags simple; can tighten later' — anyone with a path can read any non-deleted file. For a dating app where profile photos are semi-public, OK; but the path uses uuid which is unguessable. Worth documenting that paths are treated as capability tokens."},
+      {"endpoint": "POST /api/push/test", "issue": "Fake/dead endpoints generate pywebpush ERROR log entries (one per fake sub). These look noisy. Auto-deactivation on 410/404 works, but transient errors (e.g. bad headers like our test's fake p256dh) log at ERROR — consider downgrading to WARNING for non-410 push failures."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "passed_tests": [
+    "TestPushNotifications.test_vapid_public_key — returns base64url string len>20",
+    "TestPushNotifications.test_subscribe_upsert — upserts to db.push_subscriptions, idempotent (count=1 after 2 calls)",
+    "TestPushNotifications.test_push_test_endpoint_exercises_code_path — 200 with sent:int, fake endpoint doesn't crash",
+    "TestPushNotifications.test_unsubscribe — deletes sub by endpoint",
+    "TestPushNotifications.test_push_test_no_subscription_returns_zero — sent=0 with no subs",
+    "TestPushNotifications.test_unsubscribe_requires_endpoint — 400 when missing endpoint",
+    "TestAutoPushHooks.test_message_send_does_not_error_with_fake_push_sub — POST /api/messages succeeds even when receiver has dead push sub (push_on_new_message fires in background, error caught)",
+    "TestPhotoUpload.test_reject_non_image — text/plain → 400",
+    "TestPhotoUpload.test_reject_empty — 0-byte → 400",
+    "TestPhotoUpload.test_reject_too_large — 5.1MB → 400 'too large'",
+    "TestPhotoUpload.test_upload_get_delete_lifecycle — 1x1 PNG roundtrips: upload returns {file_id,url,size,photos}; GET /api/files/{path} returns same bytes with image/* content-type; DELETE removes from user.photos[] AND marks db.files.is_deleted=True; subsequent GET → 404",
+    "TestPhotoUpload.test_get_nonexistent_path_404 — 404 for unknown path",
+    "TestPhotoUpload.test_delete_requires_url — 400 with empty body",
+    "TestCronSweep.test_overdue_checkin_transitions_to_alerted — create checkin (past time, grace=15) → pymongo-set auto_notify_at=1min ago → POST /api/safety/run-post-date-alerts → response alerted>=1, doc status='alerted', alerted=True",
+    "TestCronSweep.test_sweep_skips_future_checkins — direct pymongo insert with future auto_notify_at → sweep leaves status='scheduled', alerted=False",
+    "TestStorageKeyRefresh.test_force_clear_cache_then_get_works — 2 consecutive GETs same content (verifies retry/refresh path stable)"
+  ],
+  "failed_tests": [],
+  "frontend_smoke": {
+    "routes_render": {
+      "/notifications": "Renders 'Notifications' header + 'Permission blocked' card with helpful copy ('Open your browser site settings for Spark and switch Notifications to Allow.') + privacy footnote. Headless browser correctly shows blocked state since no notification permission was granted.",
+      "/photos": "Renders 'Your Photos' header w/ 'JPEG / PNG / WebP up to 5MB each' subtext; 'Add a photo' card with 'Choose photo' button (pink CTA) and file input present; 'Your photos (2)' grid with MAIN badge on the 1st card; trash icons visible on each photo card. Note: demo1 has 2 photos so '3rd photo' deletion not exercisable via smoke.",
+      "/profile": "Shows 'Manage photos' card and 'Notifications' card — data-testid='photos-link' and data-testid='notifications-link' both present (1 each). No JS errors, no error elements."
+    },
+    "console_errors": "None. Only benign WebSocket noise."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9.py",
+    "/app/test_reports/pytest/iteration_9_results.xml"
+  ],
+  "action_items": [
+    "(MINOR — consider) Make PostDateCheckin.match_id Optional[str] if a general 'walk home safely' use-case is intended without a date partner. Currently null gets a 422.",
+    "(MINOR — cosmetic) Tighten DELETE /api/profile/photo body schema with a typed Pydantic model.",
+    "(MINOR — log-noise) Downgrade non-410 push delivery failures (like 400 bad keys) from ERROR to WARNING in push_notify_user — current fake-endpoint tests produce ERROR-level logs even though caller doesn't care.",
+    "(NOTE for next agent) test_iteration9.py expects demo1↔demo2 match (match_id 0a019632-...) — that's the only match used. Tests are idempotent and clean up after themselves; user.photos[] is snapshot+restored."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 3557 lines — Batch D added another ~330 lines on top. Router split is now urgent. Suggested modules: routers/push.py, routers/files.py, services/storage.py, services/scheduler.py.",
+    "init_storage() caches storage_key in a module-level dict `_storage_key_cache` with no TTL — if Emergent storage rotates keys, only 401/403 path triggers refresh. Add a max-age (e.g. 12h) + force-refresh on a timer to avoid first-failure cost on key expiry mid-traffic.",
+    "put_object_sync/get_object_sync use blocking `requests` inside asyncio.to_thread — fine, but no retry/backoff for transient 5xx from object store; a single 502 from storage propagates as 502 to the client.",
+    "GET /api/files/{path:path} accepts auth via ?auth= query param AND allows fully unauthenticated GET (commented as 'for now'). Token-in-query leaks into web server logs and is generally an anti-pattern. Either fully open public-photo bucket or require Bearer header.",
+    "push_notify_user iterates subs sequentially in asyncio.to_thread per webpush call — for a fan-out push (Monday weekly nudge to up to 5000 users), this would be slow. Batch with asyncio.gather and a semaphore.",
+    "_scheduled_new_week sends push to up to 5000 users in a single Monday-9am-UTC job with NO concurrency limit and NO backoff — could thundering-herd. Add chunking + asyncio.Semaphore(20).",
+    "DELETE /api/profile/photo only soft-deletes (sets is_deleted=True) — never purges from object storage. For GDPR/right-to-be-forgotten, add a TTL background job to actually call object-storage DELETE after N days.",
+    "Photo path generation: f'{APP_NAME}/photos/{user_id}/{uuid4}.{ext}' — predictable enough that knowing user_id + brute-forcing uuid4 ext is computationally infeasible BUT enumerating all photos of a user is also impossible. OK.",
+    "Push subscription doc still keeps `active=False` after 410 — never purged. Add a TTL index or periodic cleanup so dead subs don't accumulate forever.",
+    "VAPID_PRIVATE_KEY is in /app/backend/.env in plaintext — that's standard for self-hosted, but for prod multi-replica, plan to move to a secrets manager."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9.py (new — 16 tests, all green)",
+    "/app/test_reports/pytest/iteration_9_results.xml (new junit xml)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (3/3 routes + 2/2 profile entry-points)"},
+  "test_credentials": "demo1@spark.app/password123, demo2@spark.app/password123 — both working",
+  "seed_data_creation": "All tests are self-cleaning: push subscriptions inserted with fake endpoint are deleted in finally / via unsubscribe; uploaded test PNG is deleted via DELETE /api/profile/photo and user.photos[] is restored from pymongo snapshot; post_date_checkins inserted/created for cron tests are delete_many'd in finally. No persistent test data left.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_iteration9.py -v` (~7s, no LLM). Emergent Object Storage IS REAL — uses EMERGENT_LLM_KEY → init_storage() returns a session storage_key cached in _storage_key_cache (in-process). VAPID keys are real in backend/.env. Scheduler: AsyncIOScheduler (in-process, single worker) runs post_date_sweep every 5min and weekly_challenge_push Mon 09:00 UTC. The owner-triggered POST /api/safety/run-post-date-alerts calls the same _sweep_post_date_alerts(user_id_filter=user_id). To trigger an 'alerted' transition reliably: (1) POST a checkin (requires emergency_contact_email AND a real match_id — match_id field is NON-optional in pydantic schema), (2) pymongo-update auto_notify_at to past, (3) POST /api/safety/run-post-date-alerts. demo1 has 2 photos in production state; if you upload via tests, ALWAYS snapshot+restore user.photos[] in finally. Active push subscriptions for demo1/demo2 are cleaned up by tests.",
+  "rca_of_the_issue": "No bugs found in iteration 9. All 16 tests + 3 frontend routes + 2 profile entry points green. Only minor/cosmetic enhancements suggested (PostDateCheckin.match_id should accept None; push error log levels; URL-token-via-query anti-pattern; soft-delete TTL purge)."
+}

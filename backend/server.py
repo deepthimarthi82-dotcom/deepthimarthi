@@ -820,6 +820,12 @@ async def swipe(action: SwipeAction, user: dict = Depends(get_current_user)):
             # Get matched user profile
             matched_user = await db.users.find_one({"id": action.target_user_id}, {"_id": 0, "password": 0, "email": 0})
             match_data = {"match_id": match_id, "user": matched_user}
+            # Fire push to BOTH users (best-effort, non-blocking)
+            try:
+                asyncio.create_task(push_on_new_match(user["id"], match_id, (matched_user or {}).get("name", "Someone")))
+                asyncio.create_task(push_on_new_match(action.target_user_id, match_id, user.get("name", "Someone")))
+            except Exception as e:
+                logger.warning(f"Match push hook failed: {e}")
     
     return {
         "success": True,
@@ -1113,6 +1119,13 @@ async def send_message(request: Request, msg: MessageCreate, user: dict = Depend
     
     # Suspicious activity check (50+ messages in last hour)
     asyncio.create_task(check_suspicious_messaging(user["id"]))
+    
+    # Push the recipient (best-effort)
+    receiver_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    try:
+        asyncio.create_task(push_on_new_message(receiver_id, user.get("name", "Spark"), msg.match_id, msg.content))
+    except Exception as e:
+        logger.warning(f"Message push hook failed: {e}")
     
     return {"message": broadcast_msg}
 
@@ -2608,29 +2621,34 @@ async def list_post_date(user: dict = Depends(get_current_user)):
     items = await db.post_date_checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("scheduled_time", -1).to_list(100)
     return {"checkins": items}
 
-@api_router.post("/safety/run-post-date-alerts")
-async def run_post_date_alerts(user: dict = Depends(get_current_user)):
-    """Idempotent sweeper: alerts emergency contacts for any overdue, unconfirmed check-in.
-    Designed to be called from a cron worker or admin. Only the owner sees their alerts triggered."""
+async def _sweep_post_date_alerts(user_id_filter: Optional[str] = None) -> dict:
+    """Idempotent sweeper for overdue post-date check-ins. If user_id_filter is provided, only sweeps that user.
+    Returns {'alerted': N, 'checked': M, 'pushed': K}."""
     now = datetime.now(timezone.utc)
-    pending = await db.post_date_checkins.find({
-        "user_id": user["id"],
-        "status": "scheduled",
-        "alerted": False,
-    }).to_list(200)
-    alerted_count = 0
+    query = {"status": "scheduled", "alerted": False}
+    if user_id_filter:
+        query["user_id"] = user_id_filter
+    pending = await db.post_date_checkins.find(query).to_list(500)
+    alerted = 0
+    pushed = 0
     for rec in pending:
-        notify_at = datetime.fromisoformat(rec["auto_notify_at"].replace("Z", "+00:00"))
-        if notify_at <= now:
-            # Send to emergency contact email if available
-            to_email = user.get("emergency_contact_email")
-            contact_name = user.get("emergency_contact_name") or "Friend"
-            if to_email:
-                subject = f"[Spark Safety] {user.get('name', 'Your contact')} hasn't checked in"
-                html = f"""<div style='font-family:system-ui,sans-serif;max-width:560px'>
+        try:
+            notify_at = datetime.fromisoformat(rec["auto_notify_at"].replace("Z", "+00:00"))
+        except Exception:
+            continue
+        if notify_at > now:
+            continue
+        owner = await db.users.find_one({"id": rec["user_id"]})
+        if not owner:
+            continue
+        to_email = owner.get("emergency_contact_email")
+        contact_name = owner.get("emergency_contact_name") or "Friend"
+        if to_email:
+            subject = f"[Spark Safety] {owner.get('name', 'Your contact')} hasn't checked in"
+            html = f"""<div style='font-family:system-ui,sans-serif;max-width:560px'>
 <h2 style='color:#FF2E63'>Spark Safety Alert</h2>
 <p>Hi {contact_name},</p>
-<p><b>{user.get('name','Your friend')}</b> set a date check-in that has not been confirmed.</p>
+<p><b>{owner.get('name','Your friend')}</b> set a date check-in that has not been confirmed.</p>
 <ul>
 <li><b>Scheduled:</b> {rec.get('scheduled_time','—')}</li>
 <li><b>Location:</b> {rec.get('location') or 'not shared'}</li>
@@ -2639,13 +2657,25 @@ async def run_post_date_alerts(user: dict = Depends(get_current_user)):
 <p>Please reach out to check on them. If you're unable to reach them and are concerned for their safety, contact local emergency services.</p>
 <p style='color:#888;font-size:12px'>Sent automatically by Spark because you're their emergency contact.</p>
 </div>"""
-                asyncio.create_task(send_email(to_email, subject, html))
-            await db.post_date_checkins.update_one(
-                {"id": rec["id"]},
-                {"$set": {"alerted": True, "alerted_at": now.isoformat(), "status": "alerted"}}
-            )
-            alerted_count += 1
-    return {"alerted": alerted_count, "checked": len(pending)}
+            asyncio.create_task(send_email(to_email, subject, html))
+        # Also push the owner a strong reminder before alerting contact (a final nudge)
+        try:
+            await push_notify_user(owner["id"], "Check-in needed", "Tap to confirm you're safe — we're about to alert your emergency contact.", url="/safety/post-date-checkin")
+            pushed += 1
+        except Exception as e:
+            logger.warning(f"Push during sweep failed: {e}")
+        await db.post_date_checkins.update_one(
+            {"id": rec["id"]},
+            {"$set": {"alerted": True, "alerted_at": now.isoformat(), "status": "alerted"}}
+        )
+        alerted += 1
+    return {"alerted": alerted, "checked": len(pending), "pushed": pushed}
+
+@api_router.post("/safety/run-post-date-alerts")
+async def run_post_date_alerts(user: dict = Depends(get_current_user)):
+    """Manual trigger (still public for owner-triggered sweep). The background scheduler runs the same sweep every 5 minutes for ALL users."""
+    res = await _sweep_post_date_alerts(user_id_filter=user["id"])
+    return res
 
 # ==================== BATCH B: SAFE MEETING ZONES ====================
 
@@ -3200,6 +3230,305 @@ async def challenge_history(user: dict = Depends(get_current_user)):
             i["title"] = c["title"]
             i["icon"] = c.get("verb", "spark")
     return {"completions": items}
+
+# ==================== PUSH NOTIFICATIONS (WEB PUSH) ====================
+
+from pywebpush import webpush, WebPushException
+import requests as _requests
+
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:support@sparkmatch.dating")
+
+class PushSubscriptionPayload(BaseModel):
+    endpoint: str
+    keys: Dict[str, str]  # {p256dh, auth}
+    user_agent: Optional[str] = None
+
+@api_router.get("/push/vapid-public-key")
+async def get_vapid_public_key():
+    """Frontend needs this to subscribe via PushManager.subscribe."""
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+@api_router.post("/push/subscribe")
+async def push_subscribe(payload: PushSubscriptionPayload, user: dict = Depends(get_current_user)):
+    """Register a browser push subscription for the current user."""
+    record = {
+        "user_id": user["id"],
+        "endpoint": payload.endpoint,
+        "keys": payload.keys,
+        "user_agent": payload.user_agent,
+        "subscribed_at": datetime.now(timezone.utc).isoformat(),
+        "active": True,
+    }
+    await db.push_subscriptions.update_one(
+        {"user_id": user["id"], "endpoint": payload.endpoint},
+        {"$set": record},
+        upsert=True,
+    )
+    return {"subscribed": True}
+
+@api_router.post("/push/unsubscribe")
+async def push_unsubscribe(payload: dict, user: dict = Depends(get_current_user)):
+    endpoint = payload.get("endpoint")
+    if not endpoint:
+        raise HTTPException(status_code=400, detail="endpoint required")
+    await db.push_subscriptions.delete_one({"user_id": user["id"], "endpoint": endpoint})
+    return {"unsubscribed": True}
+
+async def push_notify_user(user_id: str, title: str, body: str, url: str = "/discover", tag: Optional[str] = None) -> int:
+    """Send a web-push to every active subscription of a user. Returns count sent."""
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        logger.warning("VAPID keys not configured; push skipped")
+        return 0
+    subs = await db.push_subscriptions.find({"user_id": user_id, "active": True}).to_list(20)
+    if not subs:
+        return 0
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag or "spark"})
+    sent = 0
+    for s in subs:
+        sub_info = {"endpoint": s["endpoint"], "keys": s["keys"]}
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info=sub_info,
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims={"sub": VAPID_CLAIM_EMAIL},
+            )
+            sent += 1
+        except WebPushException as e:
+            # 410 Gone → subscription removed/expired
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status in (404, 410):
+                await db.push_subscriptions.update_one(
+                    {"_id": s["_id"]},
+                    {"$set": {"active": False, "deactivated_at": datetime.now(timezone.utc).isoformat()}}
+                )
+                logger.info(f"Deactivated stale subscription for user {user_id}")
+            else:
+                logger.error(f"Push failed for user {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Push unexpected error: {e}")
+    return sent
+
+@api_router.post("/push/test")
+async def push_test(user: dict = Depends(get_current_user)):
+    """Send a test push to the current user. Useful for verifying setup."""
+    n = await push_notify_user(user["id"], "It works! ⚡", "Push notifications are live on this device.", url="/profile", tag="push-test")
+    return {"sent": n}
+
+# ==================== EMERGENT OBJECT STORAGE (PHOTO UPLOADS) ====================
+
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+APP_NAME = "spark-dating"
+_storage_key_cache = {"key": None, "set_at": None}
+
+def init_storage(force: bool = False) -> Optional[str]:
+    """Call lazily. Returns a session-scoped, reusable storage_key. None on failure (caller decides)."""
+    if not force and _storage_key_cache["key"]:
+        return _storage_key_cache["key"]
+    if not EMERGENT_LLM_KEY:
+        logger.error("EMERGENT_LLM_KEY missing — storage init aborted")
+        return None
+    try:
+        resp = _requests.post(f"{STORAGE_URL}/init", json={"emergent_key": EMERGENT_LLM_KEY}, timeout=30)
+        resp.raise_for_status()
+        key = resp.json().get("storage_key")
+        _storage_key_cache["key"] = key
+        _storage_key_cache["set_at"] = datetime.now(timezone.utc).isoformat()
+        logger.info("Emergent object storage initialized")
+        return key
+    except Exception as e:
+        logger.error(f"Storage init failed: {e}")
+        return None
+
+def put_object_sync(path: str, data: bytes, content_type: str) -> dict:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Storage unavailable")
+    resp = _requests.put(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key, "Content-Type": content_type},
+        data=data,
+        timeout=120,
+    )
+    if resp.status_code in (401, 403):
+        # Refresh and retry once
+        init_storage(force=True)
+        key = _storage_key_cache["key"]
+        resp = _requests.put(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key, "Content-Type": content_type},
+            data=data,
+            timeout=120,
+        )
+    resp.raise_for_status()
+    return resp.json()
+
+def get_object_sync(path: str) -> tuple:
+    key = init_storage()
+    if not key:
+        raise HTTPException(status_code=503, detail="Storage unavailable")
+    resp = _requests.get(
+        f"{STORAGE_URL}/objects/{path}",
+        headers={"X-Storage-Key": key},
+        timeout=60,
+    )
+    if resp.status_code in (401, 403):
+        init_storage(force=True)
+        key = _storage_key_cache["key"]
+        resp = _requests.get(
+            f"{STORAGE_URL}/objects/{path}",
+            headers={"X-Storage-Key": key},
+            timeout=60,
+        )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "application/octet-stream")
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_PHOTO_BYTES = 5 * 1024 * 1024  # 5MB
+
+@api_router.post("/profile/photo/upload")
+async def upload_photo(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    """Upload a profile photo to Emergent Object Storage and append URL to user.photos[]."""
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}. Use JPEG/PNG/WebP.")
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large (max {MAX_PHOTO_BYTES // (1024*1024)}MB)")
+    ext = "jpg" if content_type == "image/jpeg" else ("png" if content_type == "image/png" else "webp")
+    path = f"{APP_NAME}/photos/{user['id']}/{uuid.uuid4()}.{ext}"
+    try:
+        result = await asyncio.to_thread(put_object_sync, path, data, content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Photo upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Upload failed, please retry")
+    file_id = str(uuid.uuid4())
+    record = {
+        "id": file_id,
+        "user_id": user["id"],
+        "storage_path": result.get("path", path),
+        "original_filename": file.filename,
+        "content_type": content_type,
+        "size": result.get("size", len(data)),
+        "is_deleted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.files.insert_one(record)
+    # Build public URL — served via our /api/files/{path:path} route
+    backend_origin = os.environ.get("BACKEND_PUBLIC_URL", "")
+    public_url = f"/api/files/{record['storage_path']}"
+    # Append to user's photos[] (front-of-list if no photos yet, otherwise end)
+    photos = list(user.get("photos") or [])
+    photos.append(public_url)
+    await db.users.update_one({"id": user["id"]}, {"$set": {"photos": photos}})
+    return {"file_id": file_id, "url": public_url, "size": record["size"], "photos": photos}
+
+@api_router.delete("/profile/photo")
+async def delete_photo(payload: dict, user: dict = Depends(get_current_user)):
+    """Soft-delete: remove URL from user.photos[] (does not purge from object storage)."""
+    url = (payload or {}).get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="url required")
+    photos = [p for p in (user.get("photos") or []) if p != url]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"photos": photos}})
+    # Mark file record deleted (best-effort)
+    if url.startswith("/api/files/"):
+        storage_path = url[len("/api/files/"):]
+        await db.files.update_many({"storage_path": storage_path, "user_id": user["id"]}, {"$set": {"is_deleted": True}})
+    return {"photos": photos}
+
+from fastapi import Response, Header, Query
+from fastapi.responses import Response as FastAPIResponse
+
+@api_router.get("/files/{path:path}")
+async def download_file(path: str, authorization: Optional[str] = Header(None), auth: Optional[str] = Query(None)):
+    """Serve uploaded files. Accepts auth via Authorization header OR ?auth= query (for <img src>)."""
+    auth_header = authorization or (f"Bearer {auth}" if auth else None)
+    # Photos are public to authenticated users (matches social-graph privacy of profile photos)
+    if auth_header:
+        try:
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header.replace("Bearer ", ""))
+            await get_current_user(credentials)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    else:
+        # Allow unauthenticated GET for now to keep <img> tags simple; can tighten later
+        pass
+    record = await db.files.find_one({"storage_path": path, "is_deleted": False})
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        data, content_type = await asyncio.to_thread(get_object_sync, path)
+    except Exception as e:
+        logger.error(f"File download failed: {e}")
+        raise HTTPException(status_code=502, detail="Download failed")
+    return FastAPIResponse(content=data, media_type=record.get("content_type") or content_type)
+
+# ==================== BACKGROUND SCHEDULER (CRON) ====================
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+scheduler = AsyncIOScheduler(timezone="UTC")
+
+async def _scheduled_sweep():
+    """Runs every 5 minutes: sweep overdue post-date check-ins for ALL users."""
+    try:
+        res = await _sweep_post_date_alerts()
+        if res.get("alerted", 0) > 0:
+            logger.info(f"Scheduled sweep: alerted={res['alerted']} pushed={res.get('pushed', 0)}")
+    except Exception as e:
+        logger.error(f"Scheduled sweep error: {e}")
+
+async def _scheduled_new_week():
+    """Runs every Monday 09:00 UTC: push a fresh Weekly Spark Challenge nudge to all active users."""
+    try:
+        challenge = _active_challenge()
+        week_key = _current_week_key()
+        # Push to users who logged in within the last 30 days
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        users = await db.users.find({"last_active": {"$gte": cutoff}}, {"_id": 0, "id": 1}).limit(5000).to_list(5000)
+        pushed = 0
+        for u in users:
+            try:
+                n = await push_notify_user(u["id"], "New Spark Challenge!", f"This week: {challenge['title']} (+{challenge['xp']} XP)", url="/challenges", tag=f"weekly-{week_key}")
+                pushed += n
+            except Exception:
+                continue
+        logger.info(f"Monday push delivered to {pushed} subscriptions for {week_key}")
+    except Exception as e:
+        logger.error(f"Monday push error: {e}")
+
+@app.on_event("startup")
+async def _on_startup():
+    # Initialize object storage (non-blocking on failure)
+    try:
+        await asyncio.to_thread(init_storage)
+    except Exception as e:
+        logger.warning(f"Storage init at startup failed: {e}")
+    # Start scheduler
+    if not scheduler.running:
+        scheduler.add_job(_scheduled_sweep, "interval", minutes=5, id="post_date_sweep", replace_existing=True, max_instances=1)
+        scheduler.add_job(_scheduled_new_week, "cron", day_of_week="mon", hour=9, minute=0, id="weekly_challenge_push", replace_existing=True)
+        scheduler.start()
+        logger.info("Scheduler started: post_date_sweep (5min), weekly_challenge_push (Mon 09:00 UTC)")
+
+# ==================== AUTO-PUSH HOOKS ====================
+# Background helpers that other endpoints (match created, message sent) call to fire pushes.
+
+async def push_on_new_match(user_id: str, match_id: str, other_name: str):
+    """Fire push to one side of a new match."""
+    await push_notify_user(user_id, "It's a match! ⚡", f"You and {other_name} are now matched. Send the first message?", url=f"/chat/{match_id}", tag=f"match-{match_id}")
+
+async def push_on_new_message(receiver_id: str, sender_name: str, match_id: str, preview: str):
+    """Fire push for a new chat message (only if receiver is offline / not in chat)."""
+    snippet = (preview or "")[:80]
+    await push_notify_user(receiver_id, f"{sender_name}", snippet or "New message", url=f"/chat/{match_id}", tag=f"msg-{match_id}")
 
 # ==================== ROOT ====================
 
