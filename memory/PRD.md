@@ -78,19 +78,19 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - [x] Weekly Spark Challenge with XP + badges ✅ (Feb 2026)
 
 ### P1
-- [ ] **Refactor App.js (4200+ lines) into pages/components** — recurring debt
-- [ ] **Refactor server.py (3550+ lines) into routers/** — recurring debt
+- [ ] **Refactor App.js (4240+ lines) into pages/components** — recurring debt
+- [ ] **Refactor server.py (3610+ lines) into routers/** — recurring debt
 - [x] Cron worker for /safety/run-post-date-alerts ✅ (Feb 2026)
 - [ ] Real third-party background check (Checkr / IDology) integration
 - [ ] Vision selfie verify — attach actual ImageContent blocks (currently text-only heuristic)
-- [ ] TTL index on `location_shares.expires_at`
+- [x] TTL index on `location_shares.expires_at` ✅ (Feb 2026)
 - [ ] Voice note storage → S3/object storage (currently inline base64)
 - [x] Photo uploads via Emergent Object Storage ✅ (Feb 2026)
 
 ### P2
 - [x] Push notifications ✅ (Feb 2026)
 - [ ] Video date feature (in-app calls)
-- [ ] Profile activity status (last active)
+- [x] Profile activity status (last active) ✅ (Feb 2026)
 - [ ] Advanced filters (height, education, etc.)
 
 ### P3
