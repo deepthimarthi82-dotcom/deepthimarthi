@@ -111,23 +111,28 @@ class UserProfile(BaseModel):
     bio: str
     photos: List[str] = []
     location: Optional[str] = None
+    country: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    languages: List[str] = []  # e.g. ["English", "Spanish", "Hindi"]
     job_title: Optional[str] = None
     company: Optional[str] = None
     education: Optional[str] = None
     height: Optional[str] = None
-    intentions: Optional[str] = None  # "Marriage within 2 years", "Long-term relationship", etc.
-    dealbreakers: List[str] = []  # smoking, kids, religion, etc.
+    intentions: Optional[str] = None
+    dealbreakers: List[str] = []
     interests: List[str] = []
-    prompts: List[Dict[str, str]] = []  # [{"question": "...", "answer": "..."}]
+    prompts: List[Dict[str, str]] = []
 
 class CompatibilityQuiz(BaseModel):
-    communication_style: str  # "direct", "gentle", "playful"
-    conflict_resolution: str  # "talk it out", "need space first", "write it down"
-    love_language: str  # "words", "touch", "gifts", "time", "acts"
-    life_goals: List[str]  # ["career", "family", "travel", "creativity"]
-    values: List[str]  # ["honesty", "ambition", "kindness", "humor", "loyalty"]
-    weekend_preference: str  # "adventure", "chill", "social", "productive"
-    social_battery: str  # "introvert", "extrovert", "ambivert"
+    communication_style: str
+    conflict_resolution: str
+    love_language: str
+    life_goals: List[str]
+    values: List[str]
+    weekend_preference: str
+    social_battery: str
+    text_frequency: Optional[str] = None  # "constant", "daily", "couple-times-week", "minimal"
 
 class SwipeAction(BaseModel):
     target_user_id: str
@@ -148,17 +153,120 @@ class CheckoutRequest(BaseModel):
     plan_id: str  # "premium_monthly", "premium_yearly", "vip_monthly", "vip_yearly"
     origin_url: str
 
+class SafetySettings(BaseModel):
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    emergency_contact_email: Optional[str] = None
+    distance_unit: Optional[str] = "mi"  # "mi" or "km"
+    language_filter_enabled: Optional[bool] = False
+
+class ReportPayload(BaseModel):
+    reason: str  # "harassment", "fake_profile", "spam", "inappropriate", "other"
+    description: Optional[str] = None
+    urgent: bool = False
+
+class DatePlannerRequest(BaseModel):
+    budget: str  # "$", "$$", "$$$"
+    activity_type: str  # "food", "drinks", "outdoors", "culture", "active", "creative"
+    city: Optional[str] = None
+
+class SupportTicketCreate(BaseModel):
+    name: str
+    email: EmailStr
+    issue_type: str  # "Bug Report", "Account Issue", "Safety Concern", "Billing", "Other"
+    message: str
+    urgent: bool = False
+
+class BugReportCreate(BaseModel):
+    description: str
+    screenshot_data_url: Optional[str] = None  # base64 image
+    page_url: Optional[str] = None
+    browser: Optional[str] = None
+
 # ==================== SUBSCRIPTION PLANS ====================
 
 SUBSCRIPTION_PLANS = {
-    "premium_monthly": {"name": "Premium Monthly", "price": 19.99, "features": ["unlimited_swipes", "see_likes", "5_super_likes_daily", "1_boost_weekly"]},
-    "premium_yearly": {"name": "Premium Yearly", "price": 119.99, "features": ["unlimited_swipes", "see_likes", "5_super_likes_daily", "1_boost_weekly"]},
-    "vip_monthly": {"name": "VIP Monthly", "price": 39.99, "features": ["unlimited_swipes", "see_likes", "unlimited_super_likes", "3_boosts_weekly", "priority_support", "read_receipts"]},
-    "vip_yearly": {"name": "VIP Yearly", "price": 239.99, "features": ["unlimited_swipes", "see_likes", "unlimited_super_likes", "3_boosts_weekly", "priority_support", "read_receipts"]},
+    "premium_monthly": {
+        "name": "Premium Monthly",
+        "price": 19.99,
+        "features": [
+            "Unlimited likes/swipes per day",
+            "See exactly who liked you (unblurred)",
+            "AI Date Planner",
+            "Vibe Check detailed compatibility report",
+            "Profile Boost — top of stack 30 min/week",
+            "Global Passport — match in any city",
+            "Read receipts on messages",
+            "Voice messages in chat",
+            "Undo last swipe",
+            "Advanced filters (height, education, language, goal)",
+            "See who viewed your profile"
+        ]
+    },
+    "premium_yearly": {
+        "name": "Premium Yearly",
+        "price": 119.99,
+        "features": [
+            "Everything in Premium Monthly",
+            "Save 50% vs monthly"
+        ]
+    },
+    "vip_monthly": {
+        "name": "VIP Monthly",
+        "price": 39.99,
+        "features": [
+            "Everything in Premium",
+            "3 Boosts per week",
+            "Priority support",
+            "VIP badge on your profile"
+        ]
+    },
+    "vip_yearly": {
+        "name": "VIP Yearly",
+        "price": 239.99,
+        "features": [
+            "Everything in VIP Monthly",
+            "Save 50% vs monthly"
+        ]
+    },
 }
 
-FREE_DAILY_SWIPES = 10
+FREE_DAILY_SWIPES = 20
 FREE_DAILY_SUPER_LIKES = 1
+ADMIN_PREMIUM_EMAILS = {"deepthimarthi82@gmail.com", "vikaskesiraju@gmail.com"}
+
+# ==================== UTILITIES ====================
+
+import math
+import httpx
+
+def haversine_distance(lat1, lon1, lat2, lon2, unit="mi"):
+    """Distance between two lat/lng points."""
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    R = 3958.8 if unit == "mi" else 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(p1)*math.cos(p2)*math.sin(dlon/2)**2
+    return round(2 * R * math.asin(math.sqrt(a)), 1)
+
+async def geocode_city(city: str, country: Optional[str] = None):
+    """Geocode a city name to (lat, lng) using Nominatim. Returns (None, None) on failure."""
+    q = f"{city}, {country}" if country else city
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": q, "format": "json", "limit": 1},
+                headers={"User-Agent": "SparkMatch/1.0 (sparkmatch.dating)"}
+            )
+            data = r.json()
+            if data:
+                return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception as e:
+        logger.warning(f"Geocoding failed for '{q}': {e}")
+    return None, None
 
 # ==================== HELPERS ====================
 
@@ -167,6 +275,26 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed.encode())
+
+async def ensure_admin_premium(user: dict) -> dict:
+    """If the user is an admin email, force-grant permanent premium (VIP)."""
+    if user.get("email", "").lower() in ADMIN_PREMIUM_EMAILS:
+        if user.get("subscription") != "vip" or not user.get("admin_premium"):
+            far_future = (datetime.now(timezone.utc) + timedelta(days=36500)).isoformat()
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {
+                    "subscription": "vip",
+                    "subscription_expires": far_future,
+                    "admin_premium": True,
+                    "daily_swipes_remaining": 999999,
+                    "daily_super_likes_remaining": 999999,
+                }}
+            )
+            user["subscription"] = "vip"
+            user["subscription_expires"] = far_future
+            user["admin_premium"] = True
+    return user
 
 def create_token(user_id: str, email: str) -> str:
     payload = {
@@ -184,7 +312,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user = await db.users.find_one({"id": payload["user_id"]}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        return user
+        return await ensure_admin_premium(user)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -194,24 +322,27 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 @api_router.post("/auth/register")
 async def register(user_data: UserCreate):
-    existing = await db.users.find_one({"email": user_data.email})
+    email = user_data.email.lower()
+    existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     user_id = str(uuid.uuid4())
+    is_admin = email in ADMIN_PREMIUM_EMAILS
     user = {
         "id": user_id,
-        "email": user_data.email,
+        "email": email,
         "password": hash_password(user_data.password),
         "name": user_data.name,
         "profile_complete": False,
         "quiz_complete": False,
         "verified": False,
         "video_verified": False,
-        "subscription": "free",
-        "subscription_expires": None,
-        "daily_swipes_remaining": FREE_DAILY_SWIPES,
-        "daily_super_likes_remaining": FREE_DAILY_SUPER_LIKES,
+        "subscription": "vip" if is_admin else "free",
+        "subscription_expires": (datetime.now(timezone.utc) + timedelta(days=36500)).isoformat() if is_admin else None,
+        "admin_premium": is_admin,
+        "daily_swipes_remaining": 999999 if is_admin else FREE_DAILY_SWIPES,
+        "daily_super_likes_remaining": 999999 if is_admin else FREE_DAILY_SUPER_LIKES,
         "swipes_reset_date": datetime.now(timezone.utc).isoformat(),
         "boosts_remaining": 0,
         "last_active": datetime.now(timezone.utc).isoformat(),
@@ -220,16 +351,17 @@ async def register(user_data: UserCreate):
     }
     await db.users.insert_one(user)
     
-    token = create_token(user_id, user_data.email)
+    token = create_token(user_id, email)
     return {"token": token, "user_id": user_id, "profile_complete": False}
 
 @api_router.post("/auth/login")
 async def login(credentials: UserLogin):
-    user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
+    email = credentials.email.lower()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    # Update last active
+    user = await ensure_admin_premium(user)
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
     
     token = create_token(user["id"], user["email"])
@@ -252,6 +384,13 @@ async def update_profile(profile: UserProfile, user: dict = Depends(get_current_
     update_data = profile.model_dump()
     update_data["profile_complete"] = True
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    
+    # Auto-geocode city if no coords provided
+    if profile.location and (not profile.latitude or not profile.longitude):
+        lat, lng = await geocode_city(profile.location, profile.country)
+        if lat is not None:
+            update_data["latitude"] = lat
+            update_data["longitude"] = lng
     
     await db.users.update_one({"id": user["id"]}, {"$set": update_data})
     return {"message": "Profile updated", "profile_complete": True}
@@ -323,6 +462,12 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     swiped_ids = [s["swiped_id"] for s in swiped]
     swiped_ids.append(user["id"])  # Exclude self
     
+    # Exclude blocked users (both directions)
+    blocked = user.get("blocked_users", [])
+    swiped_ids.extend(blocked)
+    blocked_by_others = await db.blocks.find({"blocked_id": user["id"]}).to_list(1000)
+    swiped_ids.extend([b["blocker_id"] for b in blocked_by_others])
+    
     # Get user preferences
     looking_for = user.get("looking_for", "everyone")
     
@@ -340,10 +485,15 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     elif looking_for != "everyone":
         query["gender"] = looking_for
     
+    # Optional language filter
+    if user.get("language_filter_enabled") and user.get("languages"):
+        query["languages"] = {"$in": user["languages"]}
+    
     # Get potential matches
     profiles = await db.users.find(query, {"_id": 0, "password": 0, "email": 0}).limit(20).to_list(20)
     
-    # Calculate compatibility for each
+    # Calculate compatibility + distance for each
+    distance_unit = user.get("distance_unit", "mi")
     for profile in profiles:
         compat = await db.compatibility_scores.find_one({
             "$or": [
@@ -352,6 +502,12 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
             ]
         }, {"_id": 0})
         profile["compatibility_score"] = compat.get("score") if compat else None
+        profile["distance"] = haversine_distance(
+            user.get("latitude"), user.get("longitude"),
+            profile.get("latitude"), profile.get("longitude"),
+            distance_unit
+        )
+        profile["distance_unit"] = distance_unit
     
     return {
         "profiles": profiles,
@@ -626,7 +782,9 @@ async def send_voice_message(
     audio: UploadFile = File(...),
     user: dict = Depends(get_current_user)
 ):
-    """Upload a voice note. Audio is stored as base64 data URL for MVP simplicity."""
+    """Upload a voice note. Premium-only feature."""
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Voice Messages", "message": "Upgrade to Premium to send voice messages."})
     match = await db.matches.find_one({"id": match_id})
     if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
         raise HTTPException(status_code=403, detail="Not your match")
@@ -695,7 +853,9 @@ async def chat_websocket(websocket: WebSocket, match_id: str, token: str):
 
 @api_router.post("/ai/compatibility/{target_user_id}")
 async def calculate_compatibility(target_user_id: str, user: dict = Depends(get_current_user)):
-    """Calculate AI compatibility score between two users"""
+    """Calculate AI Vibe Check compatibility report between two users. Premium feature."""
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Vibe Check Report", "message": "Upgrade to Premium to see the detailed Vibe Compatibility report."})
     target = await db.users.find_one({"id": target_user_id}, {"_id": 0, "password": 0, "email": 0})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
@@ -1106,6 +1266,226 @@ async def get_settings(user: dict = Depends(get_current_user)):
         "subscription_expires": user.get("subscription_expires"),
         "video_verified": user.get("video_verified", False)
     }
+
+# ==================== SAFETY CENTER ====================
+
+@api_router.get("/safety/me")
+async def get_my_safety(user: dict = Depends(get_current_user)):
+    return {
+        "emergency_contact_name": user.get("emergency_contact_name"),
+        "emergency_contact_phone": user.get("emergency_contact_phone"),
+        "emergency_contact_email": user.get("emergency_contact_email"),
+        "distance_unit": user.get("distance_unit", "mi"),
+        "language_filter_enabled": user.get("language_filter_enabled", False),
+        "blocked_count": len(user.get("blocked_users", []))
+    }
+
+@api_router.put("/safety/settings")
+async def update_safety(settings: SafetySettings, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in settings.model_dump().items() if v is not None}
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {"message": "Safety settings updated", **update}
+
+@api_router.post("/safety/block/{target_user_id}")
+async def block_user(target_user_id: str, user: dict = Depends(get_current_user)):
+    if target_user_id == user["id"]:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    await db.users.update_one({"id": user["id"]}, {"$addToSet": {"blocked_users": target_user_id}})
+    await db.blocks.insert_one({
+        "id": str(uuid.uuid4()),
+        "blocker_id": user["id"],
+        "blocked_id": target_user_id,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    # Auto-unmatch any match between them
+    await db.matches.update_many(
+        {"$or": [
+            {"user1_id": user["id"], "user2_id": target_user_id},
+            {"user1_id": target_user_id, "user2_id": user["id"]}
+        ]},
+        {"$set": {"status": "blocked"}}
+    )
+    return {"message": "User blocked"}
+
+@api_router.post("/safety/unblock/{target_user_id}")
+async def unblock_user(target_user_id: str, user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$pull": {"blocked_users": target_user_id}})
+    await db.blocks.delete_many({"blocker_id": user["id"], "blocked_id": target_user_id})
+    return {"message": "User unblocked"}
+
+@api_router.get("/safety/blocked")
+async def list_blocked(user: dict = Depends(get_current_user)):
+    blocked_ids = user.get("blocked_users", [])
+    if not blocked_ids:
+        return {"blocked": []}
+    users = await db.users.find({"id": {"$in": blocked_ids}}, {"_id": 0, "password": 0, "email": 0}).to_list(100)
+    return {"blocked": users}
+
+@api_router.post("/safety/report/{target_user_id}")
+async def report_user(target_user_id: str, payload: ReportPayload, user: dict = Depends(get_current_user)):
+    report = {
+        "id": str(uuid.uuid4()),
+        "reporter_id": user["id"],
+        "reported_id": target_user_id,
+        "reason": payload.reason,
+        "description": payload.description,
+        "urgent": payload.urgent,
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.reports.insert_one(report)
+    return {"message": "Report submitted. Our safety team will review within 24 hours.", "report_id": report["id"]}
+
+@api_router.post("/safety/panic")
+async def panic_button(match_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Log a panic event and return emergency contact info for client-side actions (SMS/call)."""
+    contact = {
+        "name": user.get("emergency_contact_name"),
+        "phone": user.get("emergency_contact_phone"),
+        "email": user.get("emergency_contact_email"),
+    }
+    event = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "match_id": match_id,
+        "contact": contact,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.panic_events.insert_one(event)
+    if not any(contact.values()):
+        return {"event_id": event["id"], "contact": None, "warning": "No emergency contact set. Please add one in the Safety Center."}
+    return {"event_id": event["id"], "contact": contact}
+
+# ==================== SUPPORT CENTER ====================
+
+@api_router.post("/support/contact")
+async def create_support_ticket(ticket: SupportTicketCreate, user: dict = Depends(get_current_user)):
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "name": ticket.name,
+        "email": ticket.email,
+        "issue_type": ticket.issue_type,
+        "message": ticket.message,
+        "urgent": ticket.urgent,
+        "status": "open",
+        "deliver_to": "support@sparkmatch.dating",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.support_tickets.insert_one(record)
+    return {"message": "Got it! Our team will email you back within 24h.", "ticket_id": record["id"]}
+
+@api_router.post("/support/bug-report")
+async def create_bug_report(report: BugReportCreate, user: dict = Depends(get_current_user)):
+    if report.screenshot_data_url and len(report.screenshot_data_url) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Screenshot too large (max 5MB)")
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "description": report.description,
+        "screenshot_data_url": report.screenshot_data_url,
+        "page_url": report.page_url,
+        "browser": report.browser,
+        "status": "open",
+        "deliver_to": "support@sparkmatch.dating",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.bug_reports.insert_one(record)
+    return {"message": "Bug report submitted. Thank you!", "report_id": record["id"]}
+
+@api_router.get("/support/faq")
+async def get_faq():
+    """Static FAQ content."""
+    return {"faqs": [
+        {"q": "How does matching work?", "a": "Spark uses AI compatibility scoring based on your Vibe Check answers, interests, intentions, and conversation patterns. When two users like each other, it's a match!"},
+        {"q": "How does Vibe Check work?", "a": "Before you start swiping, you answer a few quick questions about your communication style, conflict resolution, love language, and lifestyle. Our AI uses these to calculate a Vibe Compatibility Score (0-100%) for every potential match."},
+        {"q": "How do I delete my account?", "a": "Go to Settings → Account → Delete Account. This permanently erases your profile, matches, messages, and all associated data within 30 days. This action cannot be undone."},
+        {"q": "How do I report someone?", "a": "On any profile or in any chat, tap the shield icon. You can block, report (with optional details), or use the Panic Button to alert your emergency contact. Safety reports are reviewed within 24 hours."},
+        {"q": "How do I cancel premium?", "a": "Go to Settings → Subscription → Manage. Your premium remains active until the end of your billing cycle. You will not be charged again."},
+        {"q": "What's the 7-day countdown?", "a": "Every match has 7 days to agree to a real date. This keeps things moving and respects your time. You can request one 3-day extension if needed."},
+        {"q": "Is Spark Match safe?", "a": "We offer video verification, date check-ins, block/report tools, a panic button linked to your emergency contact, and 24-hour safety team reviews. Always meet in public for the first date."}
+    ]}
+
+# ==================== AI DATE PLANNER ====================
+
+@api_router.post("/ai/date-planner/{match_id}")
+async def ai_date_planner(match_id: str, req: DatePlannerRequest, user: dict = Depends(get_current_user)):
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "AI Date Planner", "message": "Upgrade to Premium to unlock the AI Date Planner."})
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    
+    other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    other = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+    
+    city = req.city or user.get("location") or other.get("location") or "your city"
+    your_interests = ", ".join(user.get("interests", [])) or "general"
+    their_interests = ", ".join(other.get("interests", [])) or "general"
+    
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"dateplanner-{match_id}-{datetime.now(timezone.utc).timestamp()}",
+            system_message="""You are an expert date planner. Given two users' interests, a budget tier ($, $$, $$$), a preferred activity type, and a city, suggest 3 specific date ideas.
+For each idea include:
+- title (catchy)
+- venue (REAL venue name in that city if possible, or generic if you don't know one)
+- estimated_cost (number range in USD like "$30-50")
+- duration (e.g. "2-3 hours")
+- why_it_works (1-2 sentences referencing BOTH users' vibes)
+- vibe (one of: romantic, fun, chill, adventurous, creative)
+
+Respond ONLY with raw JSON, no markdown:
+{"city": "string", "date_ideas": [{"title":"","venue":"","estimated_cost":"","duration":"","why_it_works":"","vibe":""}]}"""
+        ).with_model("openai", "gpt-4o")
+        
+        response = await chat.send_message(UserMessage(
+            text=f"City: {city}\nBudget: {req.budget}\nActivity type: {req.activity_type}\nUser A interests: {your_interests}\nUser B interests: {their_interests}"
+        ))
+        result = extract_json(response)
+        return result
+    except Exception as e:
+        logger.error(f"Date planner error: {e}")
+        raise HTTPException(status_code=503, detail="Couldn't generate date ideas right now — try again in a moment")
+
+# ==================== DATE COUNTDOWN ====================
+
+@api_router.post("/matches/{match_id}/extend")
+async def extend_match(match_id: str, user: dict = Depends(get_current_user)):
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    if match.get("extended"):
+        raise HTTPException(status_code=400, detail="This match has already been extended once")
+    
+    current_expiry = datetime.fromisoformat(match["expires_at"]) if match.get("expires_at") else datetime.now(timezone.utc)
+    new_expiry = max(current_expiry, datetime.now(timezone.utc)) + timedelta(days=3)
+    await db.matches.update_one({"id": match_id}, {"$set": {
+        "expires_at": new_expiry.isoformat(),
+        "extended": True,
+        "extended_by": user["id"],
+        "extended_at": datetime.now(timezone.utc).isoformat()
+    }})
+    return {"message": "Extended by 3 days!", "new_expiry": new_expiry.isoformat()}
+
+@api_router.post("/matches/{match_id}/agree-date")
+async def agree_to_date(match_id: str, user: dict = Depends(get_current_user)):
+    """Either user can confirm they've agreed to meet — once both confirm, expiry is removed."""
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    
+    field = "user1_agreed" if user["id"] == match["user1_id"] else "user2_agreed"
+    update = {field: True, f"{field}_at": datetime.now(timezone.utc).isoformat()}
+    await db.matches.update_one({"id": match_id}, {"$set": update})
+    
+    updated = await db.matches.find_one({"id": match_id})
+    if updated.get("user1_agreed") and updated.get("user2_agreed"):
+        await db.matches.update_one({"id": match_id}, {"$set": {"expires_at": None, "date_agreed": True}})
+        return {"message": "Both of you agreed! Countdown stopped. Have an amazing date!", "both_agreed": True}
+    
+    return {"message": "Your agreement is recorded. Waiting for your match to confirm.", "both_agreed": False}
 
 # ==================== ROOT ====================
 

@@ -107,8 +107,74 @@ const apiCall = async (method, endpoint, data = null, token = null) => {
     headers: token ? { Authorization: `Bearer ${token}` } : {}
   };
   if (data) config.data = data;
-  const res = await axios(config);
-  return res.data;
+  try {
+    const res = await axios(config);
+    return res.data;
+  } catch (err) {
+    // Surface premium-required errors via global modal
+    const d = err?.response?.data?.detail;
+    if (err?.response?.status === 402 && d && typeof d === "object" && d.premium_required) {
+      window.dispatchEvent(new CustomEvent("spark:upgrade", { detail: d }));
+    }
+    throw err;
+  }
+};
+
+// ==================== UPGRADE MODAL ====================
+const UpgradeModal = () => {
+  const [open, setOpen] = useState(false);
+  const [info, setInfo] = useState({});
+  const navigate = useNavigate();
+  useEffect(() => {
+    const handler = (e) => { setInfo(e.detail || {}); setOpen(true); };
+    window.addEventListener("spark:upgrade", handler);
+    return () => window.removeEventListener("spark:upgrade", handler);
+  }, []);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[70] p-4" data-testid="upgrade-modal">
+      <div className="card-brutal max-w-sm w-full p-6 text-center">
+        <Crown className="w-12 h-12 text-[#FF2E63] mx-auto mb-3" />
+        <h2 className="text-2xl font-bold mb-1" style={{ fontFamily: 'Syne' }}>Premium Feature</h2>
+        <p className="text-gray-600 mb-4">
+          <span className="font-bold text-[#FF2E63]">{info.feature || "This"}</span> is only for Premium members.
+        </p>
+        <p className="text-sm text-gray-700 mb-6">{info.message}</p>
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={() => { setOpen(false); navigate("/subscription"); }}
+            className="btn-primary w-full"
+            data-testid="upgrade-now-btn"
+          >
+            Upgrade to Premium
+          </button>
+          <button onClick={() => setOpen(false)} className="text-sm text-gray-500 hover:underline">
+            Maybe later
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ==================== HELP BUBBLE (Floating) ====================
+const HelpBubble = () => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Hide on public pages (landing, login, signup, legal)
+  const publicPaths = ["/", "/login", "/signup", "/privacy", "/terms"];
+  if (publicPaths.includes(location.pathname)) return null;
+  return (
+    <button
+      onClick={() => navigate("/help")}
+      className="fixed bottom-24 right-4 z-40 bg-[#FF2E63] text-white border-2 border-black rounded-full shadow-[4px_4px_0_#000] px-4 py-3 flex items-center gap-2 hover:translate-y-0.5 hover:shadow-[2px_2px_0_#000] transition-all"
+      data-testid="help-bubble"
+      aria-label="Need help?"
+    >
+      <MessageCircle className="w-5 h-5" />
+      <span className="font-bold text-sm hidden sm:inline">Need help?</span>
+    </button>
+  );
 };
 
 // ==================== LEGAL PAGES ====================
@@ -1395,7 +1461,7 @@ const DiscoverPage = () => {
                 
                 {/* Profile Info */}
                 <div className="absolute bottom-0 left-0 right-0 p-6 text-white">
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <h2 className="text-3xl font-bold" style={{ fontFamily: 'Syne' }}>
                       {currentProfile.name}, {currentProfile.age}
                     </h2>
@@ -1404,10 +1470,20 @@ const DiscoverPage = () => {
                         <Check className="w-4 h-4" />
                       </div>
                     )}
+                    {(currentProfile.subscription === "premium" || currentProfile.subscription === "vip") && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#FF2E63] text-white text-xs font-bold rounded-full border-2 border-white" data-testid="premium-badge">
+                        <Crown className="w-3 h-3" />
+                        {currentProfile.subscription === "vip" ? "VIP" : "PREMIUM"}
+                      </span>
+                    )}
                   </div>
                   
                   {currentProfile.job_title && (
-                    <p className="text-white/80 mb-2">{currentProfile.job_title} {currentProfile.location && `• ${currentProfile.location}`}</p>
+                    <p className="text-white/80 mb-2">
+                      {currentProfile.job_title}
+                      {currentProfile.location && ` • ${currentProfile.location}`}
+                      {currentProfile.distance != null && ` • ${currentProfile.distance} ${currentProfile.distance_unit || 'mi'}`}
+                    </p>
                   )}
                   
                   {currentProfile.intentions && (
@@ -1417,7 +1493,7 @@ const DiscoverPage = () => {
                   {currentProfile.compatibility_score && (
                     <div className="mt-3 flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-[#CCFF00]" />
-                      <span className="text-[#CCFF00] font-bold">{currentProfile.compatibility_score}% Match</span>
+                      <span className="text-[#CCFF00] font-bold">{currentProfile.compatibility_score}% Vibe Match</span>
                     </div>
                   )}
                 </div>
@@ -2400,19 +2476,24 @@ const SubscriptionPage = () => {
   }
 
   const premiumFeatures = [
-    "Unlimited swipes",
-    "See who likes you",
-    "5 Super Likes daily",
-    "1 Boost per week",
-    "No ads"
+    "Unlimited likes/swipes per day",
+    "See exactly who liked you (unblurred)",
+    "AI Date Planner",
+    "Vibe Check detailed compatibility report",
+    "Profile Boost — top of stack 30 min/week",
+    "Global Passport — match in any city",
+    "Read receipts on messages",
+    "Voice messages in chat",
+    "Undo last swipe",
+    "Advanced filters (height, education, language)",
+    "See who viewed your profile"
   ];
 
   const vipFeatures = [
-    ...premiumFeatures,
-    "Unlimited Super Likes",
+    "Everything in Premium",
     "3 Boosts per week",
-    "Read receipts",
-    "Priority support"
+    "Priority support",
+    "VIP badge on your profile"
   ];
 
   return (
@@ -2596,12 +2677,28 @@ const SettingsPage = () => {
           <button 
             onClick={() => navigate("/safety")}
             className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-safety-link"
           >
             <div className="flex items-center gap-3">
               <Shield className="w-5 h-5 text-[#00CC66]" />
               <div>
-                <h3 className="font-bold">Safety Features</h3>
-                <p className="text-sm text-gray-600">Date check-ins, emergency contacts</p>
+                <h3 className="font-bold">Safety Center</h3>
+                <p className="text-sm text-gray-600">Panic button, emergency contact, blocked users</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/help")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-help-link"
+          >
+            <div className="flex items-center gap-3">
+              <MessageCircle className="w-5 h-5 text-[#FF2E63]" />
+              <div>
+                <h3 className="font-bold">Help &amp; Support</h3>
+                <p className="text-sm text-gray-600">FAQ, contact us, report a bug</p>
               </div>
             </div>
             <ChevronRight className="w-5 h-5" />
@@ -2618,6 +2715,315 @@ const SettingsPage = () => {
           </div>
         </div>
       </div>
+    </AppLayout>
+  );
+};
+
+// ==================== SAFETY CENTER ====================
+const SafetyPage = () => {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [data, setData] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [blocked, setBlocked] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [s, b] = await Promise.all([
+          apiCall("get", "/safety/me", null, token),
+          apiCall("get", "/safety/blocked", null, token),
+        ]);
+        setData(s);
+        setBlocked(b.blocked || []);
+      } catch (e) { toast.error("Failed to load safety center"); }
+      setLoading(false);
+    })();
+  }, [token]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiCall("put", "/safety/settings", {
+        emergency_contact_name: data.emergency_contact_name || null,
+        emergency_contact_phone: data.emergency_contact_phone || null,
+        emergency_contact_email: data.emergency_contact_email || null,
+        distance_unit: data.distance_unit || "mi",
+        language_filter_enabled: !!data.language_filter_enabled,
+      }, token);
+      toast.success("Safety settings saved");
+    } catch (e) { toast.error("Failed to save"); }
+    setSaving(false);
+  };
+
+  const triggerPanic = async () => {
+    try {
+      const res = await apiCall("post", "/safety/panic", null, token);
+      if (!res.contact || !Object.values(res.contact).some(Boolean)) {
+        toast.error(res.warning || "Add an emergency contact first");
+        return;
+      }
+      const c = res.contact;
+      const msg = `Spark Panic Alert: I need help. Please check on me.`;
+      if (c.phone) window.location.href = `sms:${c.phone}?body=${encodeURIComponent(msg)}`;
+      else if (c.email) window.location.href = `mailto:${c.email}?subject=Spark Panic Alert&body=${encodeURIComponent(msg)}`;
+      toast.success(`Alert prepared for ${c.name || c.phone || c.email}`);
+    } catch { toast.error("Couldn't trigger panic alert"); }
+  };
+
+  const unblock = async (id) => {
+    try {
+      await apiCall("post", `/safety/unblock/${id}`, null, token);
+      setBlocked(blocked.filter(b => b.id !== id));
+      toast.success("Unblocked");
+    } catch { toast.error("Failed to unblock"); }
+  };
+
+  if (loading) return <AppLayout><div className="text-center py-10">Loading...</div></AppLayout>;
+
+  return (
+    <AppLayout>
+      <div data-testid="safety-page" className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold mb-1" style={{ fontFamily: 'Syne' }}>Safety Center</h2>
+          <p className="text-gray-600 text-sm">Tools to keep you safe on Spark.</p>
+        </div>
+
+        {/* Panic Button */}
+        <div className="card-brutal p-5 bg-[#FFE5E5]">
+          <h3 className="text-lg font-bold mb-1" style={{ fontFamily: 'Syne' }}>Panic Button</h3>
+          <p className="text-sm text-gray-700 mb-3">Instantly text your emergency contact with a help message.</p>
+          <button
+            onClick={triggerPanic}
+            className="w-full py-4 bg-[#FF0000] text-white font-extrabold text-lg border-2 border-black rounded-lg shadow-[4px_4px_0_#000] hover:translate-y-0.5 hover:shadow-[2px_2px_0_#000] transition-all"
+            data-testid="panic-btn"
+          >
+            🚨 PANIC — ALERT MY CONTACT
+          </button>
+        </div>
+
+        {/* Emergency Contact */}
+        <div className="card-brutal p-5 space-y-3">
+          <h3 className="text-lg font-bold" style={{ fontFamily: 'Syne' }}>Emergency Contact</h3>
+          <input className="input-brutal" placeholder="Contact name" data-testid="ec-name"
+            value={data.emergency_contact_name || ""} onChange={e => setData({...data, emergency_contact_name: e.target.value})} />
+          <input className="input-brutal" placeholder="Phone (with country code, e.g. +1...)" data-testid="ec-phone"
+            value={data.emergency_contact_phone || ""} onChange={e => setData({...data, emergency_contact_phone: e.target.value})} />
+          <input className="input-brutal" placeholder="Email (optional)" data-testid="ec-email"
+            value={data.emergency_contact_email || ""} onChange={e => setData({...data, emergency_contact_email: e.target.value})} />
+        </div>
+
+        {/* Preferences */}
+        <div className="card-brutal p-5 space-y-3">
+          <h3 className="text-lg font-bold" style={{ fontFamily: 'Syne' }}>Preferences</h3>
+          <div>
+            <label className="block text-sm font-bold mb-2">Distance unit</label>
+            <div className="grid grid-cols-2 gap-2">
+              {["mi", "km"].map(u => (
+                <button key={u} onClick={() => setData({...data, distance_unit: u})}
+                  className={`p-3 border-2 border-black rounded-lg font-bold ${data.distance_unit === u ? 'bg-[#FF2E63] text-white' : 'bg-white'}`}
+                  data-testid={`unit-${u}`}>
+                  {u === "mi" ? "Miles" : "Kilometers"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="flex items-center gap-3 p-3 border-2 border-black rounded-lg cursor-pointer">
+            <input type="checkbox" className="w-5 h-5 accent-[#FF2E63]" checked={!!data.language_filter_enabled}
+              onChange={e => setData({...data, language_filter_enabled: e.target.checked})} data-testid="lang-filter" />
+            <span className="text-sm font-bold">Only show matches who share a language with me</span>
+          </label>
+        </div>
+
+        <button onClick={save} disabled={saving} className="btn-primary w-full" data-testid="save-safety-btn">
+          {saving ? "Saving..." : "Save Safety Settings"}
+        </button>
+
+        {/* Blocked Users */}
+        <div className="card-brutal p-5">
+          <h3 className="text-lg font-bold mb-3" style={{ fontFamily: 'Syne' }}>Blocked Users ({blocked.length})</h3>
+          {blocked.length === 0 ? (
+            <p className="text-sm text-gray-500">You haven't blocked anyone.</p>
+          ) : (
+            <div className="space-y-2">
+              {blocked.map(b => (
+                <div key={b.id} className="flex items-center justify-between p-2 border-2 border-black rounded-lg" data-testid={`blocked-${b.id}`}>
+                  <div className="flex items-center gap-2">
+                    <img src={b.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=60"} alt="" className="w-10 h-10 rounded-full object-cover border-2 border-black" />
+                    <span className="font-bold text-sm">{b.name}</span>
+                  </div>
+                  <button onClick={() => unblock(b.id)} className="text-xs font-bold text-[#FF2E63] hover:underline">Unblock</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button onClick={() => navigate("/help")} className="btn-secondary w-full" data-testid="report-link">
+          Report Harassment or Abuse →
+        </button>
+      </div>
+    </AppLayout>
+  );
+};
+
+// ==================== SUPPORT / HELP ====================
+const HelpPage = () => {
+  const navigate = useNavigate();
+  return (
+    <AppLayout>
+      <div data-testid="help-page" className="space-y-4">
+        <div>
+          <h2 className="text-2xl font-bold mb-1" style={{ fontFamily: 'Syne' }}>Help &amp; Support</h2>
+          <p className="text-gray-600 text-sm">We're here for you.</p>
+        </div>
+        {[
+          { path: "/faq", title: "FAQ", desc: "Quick answers to common questions", icon: AlertCircle },
+          { path: "/support/contact", title: "Contact Support", desc: "Talk to a real person", icon: MessageCircle },
+          { path: "/support/bug", title: "Report a Bug", desc: "Spotted something broken?", icon: AlertCircle, testid: "bug-link" },
+          { path: "/support/contact?type=Safety+Concern&urgent=1", title: "Report Harassment", desc: "Urgent safety issue", icon: Shield },
+          { path: "/safety", title: "Safety Center", desc: "Panic button, blocked users, emergency contact", icon: Shield },
+        ].map((it) => (
+          <button key={it.path} onClick={() => navigate(it.path)} className="card-feature w-full flex items-center justify-between text-left" data-testid={it.testid || `help-${it.title.toLowerCase().replace(/\s+/g, '-')}`}>
+            <div className="flex items-center gap-3">
+              <it.icon className="w-5 h-5 text-[#FF2E63]" />
+              <div>
+                <h3 className="font-bold">{it.title}</h3>
+                <p className="text-xs text-gray-600">{it.desc}</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        ))}
+        <p className="text-xs text-center text-gray-500 mt-6">Or email <a href="mailto:support@sparkmatch.dating" className="text-[#FF2E63] font-bold">support@sparkmatch.dating</a></p>
+      </div>
+    </AppLayout>
+  );
+};
+
+const FaqPage = () => {
+  const [faqs, setFaqs] = useState([]);
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    apiCall("get", "/support/faq").then(r => setFaqs(r.faqs || []));
+  }, []);
+  return (
+    <AppLayout>
+      <div data-testid="faq-page" className="space-y-3">
+        <h2 className="text-2xl font-bold mb-4" style={{ fontFamily: 'Syne' }}>FAQ</h2>
+        {faqs.map((f, i) => (
+          <div key={i} className="card-brutal p-4" data-testid={`faq-${i}`}>
+            <button onClick={() => setOpen(open === i ? null : i)} className="w-full flex items-start justify-between gap-3 text-left">
+              <span className="font-bold">{f.q}</span>
+              <ChevronRight className={`w-5 h-5 flex-shrink-0 transition-transform ${open === i ? 'rotate-90' : ''}`} />
+            </button>
+            {open === i && <p className="mt-3 text-sm text-gray-700 leading-relaxed">{f.a}</p>}
+          </div>
+        ))}
+      </div>
+    </AppLayout>
+  );
+};
+
+const ContactSupportPage = () => {
+  const { token, user } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const presetType = searchParams.get("type");
+  const presetUrgent = searchParams.get("urgent") === "1";
+  const [form, setForm] = useState({
+    name: user?.name || "",
+    email: user?.email || "",
+    issue_type: presetType || "Bug Report",
+    message: "",
+    urgent: presetUrgent,
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await apiCall("post", "/support/contact", form, token);
+      toast.success(res.message);
+      navigate("/help");
+    } catch { toast.error("Failed to submit"); }
+    setSubmitting(false);
+  };
+  const types = ["Bug Report", "Account Issue", "Safety Concern", "Billing", "Other"];
+  return (
+    <AppLayout>
+      <form onSubmit={submit} data-testid="contact-page" className="space-y-4">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Contact Support</h2>
+        <p className="text-sm text-gray-600">We typically reply within 24 hours.</p>
+        <input className="input-brutal" placeholder="Your name" required data-testid="contact-name"
+          value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+        <input className="input-brutal" type="email" placeholder="Email" required data-testid="contact-email"
+          value={form.email} onChange={e => setForm({...form, email: e.target.value})} />
+        <select className="input-brutal" data-testid="contact-type"
+          value={form.issue_type} onChange={e => setForm({...form, issue_type: e.target.value})}>
+          {types.map(t => <option key={t}>{t}</option>)}
+        </select>
+        <textarea className="input-brutal min-h-[140px]" placeholder="Describe your issue..." required data-testid="contact-message"
+          value={form.message} onChange={e => setForm({...form, message: e.target.value})} />
+        <label className="flex items-center gap-3 p-3 border-2 border-black rounded-lg cursor-pointer bg-[#FFE5E5]">
+          <input type="checkbox" className="w-5 h-5 accent-[#FF2E63]" checked={form.urgent}
+            onChange={e => setForm({...form, urgent: e.target.checked})} data-testid="contact-urgent" />
+          <span className="text-sm font-bold">Mark as urgent (safety concerns only)</span>
+        </label>
+        <button type="submit" disabled={submitting} className="btn-primary w-full" data-testid="contact-submit">
+          {submitting ? "Sending..." : "Send"}
+        </button>
+        <p className="text-xs text-center text-gray-500">Sends to support@sparkmatch.dating</p>
+      </form>
+    </AppLayout>
+  );
+};
+
+const BugReportPage = () => {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [desc, setDesc] = useState("");
+  const [screenshot, setScreenshot] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const onFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { toast.error("Max 5MB"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setScreenshot(reader.result);
+    reader.readAsDataURL(f);
+  };
+  const submit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await apiCall("post", "/support/bug-report", {
+        description: desc,
+        screenshot_data_url: screenshot,
+        page_url: window.location.href,
+        browser: navigator.userAgent,
+      }, token);
+      toast.success(res.message);
+      navigate("/help");
+    } catch { toast.error("Failed to submit"); }
+    setSubmitting(false);
+  };
+  return (
+    <AppLayout>
+      <form onSubmit={submit} data-testid="bug-page" className="space-y-4">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Report a Bug</h2>
+        <textarea className="input-brutal min-h-[140px]" placeholder="What broke? Steps to reproduce..." required data-testid="bug-desc"
+          value={desc} onChange={e => setDesc(e.target.value)} />
+        <div>
+          <label className="block text-sm font-bold mb-2">Screenshot (optional)</label>
+          <input type="file" accept="image/*" onChange={onFile} className="text-sm" data-testid="bug-screenshot" />
+          {screenshot && <img src={screenshot} alt="" className="mt-2 max-h-40 border-2 border-black rounded" />}
+        </div>
+        <button type="submit" disabled={submitting} className="btn-primary w-full" data-testid="bug-submit">
+          {submitting ? "Submitting..." : "Submit Bug"}
+        </button>
+      </form>
     </AppLayout>
   );
 };
@@ -2669,8 +3075,15 @@ function App() {
             <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
             <Route path="/subscription/success" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="/safety" element={<ProtectedRoute><SafetyPage /></ProtectedRoute>} />
+            <Route path="/help" element={<ProtectedRoute><HelpPage /></ProtectedRoute>} />
+            <Route path="/faq" element={<ProtectedRoute><FaqPage /></ProtectedRoute>} />
+            <Route path="/support/contact" element={<ProtectedRoute><ContactSupportPage /></ProtectedRoute>} />
+            <Route path="/support/bug" element={<ProtectedRoute><BugReportPage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          <HelpBubble />
+          <UpgradeModal />
         </BrowserRouter>
       </div>
     </AuthProvider>
