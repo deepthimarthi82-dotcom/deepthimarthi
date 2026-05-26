@@ -2855,6 +2855,352 @@ async def get_badges(user_id: str, user: dict = Depends(get_current_user)):
     if p.get("anti_ghosting_pledge"): badges.append({"id": "anti_ghosting", "label": "Anti-Ghosting Pledge", "tier": "values"})
     return {"badges": badges}
 
+# ==================== BATCH C: COMPATIBILITY TIMELINE ====================
+
+@api_router.get("/match/{match_id}/timeline")
+async def compatibility_timeline(match_id: str, user: dict = Depends(get_current_user)):
+    """AI-predicted relationship milestones for a match, based on both profiles + DNA + intentions."""
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    # Cache: same match → same timeline for 7 days
+    cached = await db.compat_timelines.find_one({"match_id": match_id})
+    if cached:
+        cached_at = datetime.fromisoformat(cached["generated_at"].replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - cached_at).days < 7:
+            return {"milestones": cached["milestones"], "generated_at": cached["generated_at"], "cached": True}
+
+    other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    other = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+    if not other:
+        raise HTTPException(status_code=404, detail="Match user missing")
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"timeline-{match_id}",
+            system_message=(
+                "You generate a realistic, encouraging relationship-milestone timeline for two daters who just matched. "
+                "Use their interests, intentions, growth goals, and Big-Five personality DNA to predict 6 milestones. "
+                "Each milestone has: title (short), estimated_window (e.g. 'Week 1', 'Month 2'), why (one sentence), confidence (low/medium/high). "
+                'Respond ONLY with raw JSON: {"milestones":[{"title":"","estimated_window":"","why":"","confidence":""}, ...6 items]}'
+            )
+        ).with_model("openai", "gpt-4o")
+        body = (
+            f"User A: interests={user.get('interests',[])}; intentions={user.get('intentions')}; goals={user.get('growth_goals',[])}; dna={user.get('personality_dna',{})}\n"
+            f"User B: interests={other.get('interests',[])}; intentions={other.get('intentions')}; goals={other.get('growth_goals',[])}; dna={other.get('personality_dna',{})}"
+        )
+        response = await chat.send_message(UserMessage(text=body))
+        data = extract_json(response)
+        milestones = data.get("milestones") if isinstance(data, dict) else None
+        if not isinstance(milestones, list) or len(milestones) < 4:
+            raise ValueError("Invalid milestone list")
+        # Sanitize each milestone
+        cleaned = []
+        for m in milestones[:6]:
+            cleaned.append({
+                "title": str(m.get("title", "Milestone"))[:80],
+                "estimated_window": str(m.get("estimated_window", ""))[:40],
+                "why": str(m.get("why", ""))[:200],
+                "confidence": (m.get("confidence") or "medium").lower() if str(m.get("confidence","")).lower() in ("low","medium","high") else "medium",
+            })
+        milestones = cleaned
+    except Exception as e:
+        logger.error(f"Timeline LLM error: {e}")
+        milestones = [
+            {"title": "First real conversation", "estimated_window": "Week 1", "why": "Both of you have strong communication interests.", "confidence": "high"},
+            {"title": "First voice or video call", "estimated_window": "Week 1-2", "why": "Builds trust before meeting in person.", "confidence": "medium"},
+            {"title": "First in-person date", "estimated_window": "Week 2-3", "why": "Aligned intentions and shared interests.", "confidence": "high"},
+            {"title": "Decide on exclusivity", "estimated_window": "Month 2-3", "why": "Both signaled long-term intent.", "confidence": "medium"},
+            {"title": "Meet each other's close friends", "estimated_window": "Month 3-4", "why": "Natural next step for serious daters.", "confidence": "medium"},
+            {"title": "First weekend trip together", "estimated_window": "Month 4-6", "why": "Test compatibility in a relaxed setting.", "confidence": "low"},
+        ]
+    record = {
+        "match_id": match_id,
+        "milestones": milestones,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.compat_timelines.update_one({"match_id": match_id}, {"$set": record}, upsert=True)
+    return {"milestones": milestones, "generated_at": record["generated_at"], "cached": False}
+
+# ==================== BATCH C: FIRST DATE SCRIPT ====================
+
+@api_router.get("/chat/{match_id}/first-date-script")
+async def first_date_script(match_id: str, user: dict = Depends(get_current_user)):
+    """AI conversation guide for the first IRL date. Unlocks after 10+ messages exchanged."""
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    msg_count = await db.messages.count_documents({"match_id": match_id})
+    if msg_count < 10:
+        return {"unlocked": False, "messages_needed": 10 - msg_count, "messages_so_far": msg_count}
+
+    # Cache for 24h per match
+    cached = await db.first_date_scripts.find_one({"match_id": match_id})
+    if cached:
+        cached_at = datetime.fromisoformat(cached["generated_at"].replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - cached_at).total_seconds() < 24 * 3600:
+            return {"unlocked": True, "script": cached["script"], "generated_at": cached["generated_at"], "cached": True}
+
+    other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    other = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+    if not other:
+        raise HTTPException(status_code=404, detail="Match user missing")
+
+    # Grab last 15 messages for context (decrypted by middleware/service in main /messages, but for raw access we'll just use counts/interests)
+    recent = await db.messages.find({"match_id": match_id}, {"_id": 0, "content": 1}).sort("created_at", -1).limit(15).to_list(15)
+    snippet = " | ".join([m.get("content", "")[:120] for m in recent if m.get("content")])
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"first-date-script-{match_id}",
+            system_message=(
+                "You write a friendly first-date conversation guide for ONE of the two daters. Output strict JSON: "
+                '{"openers":["..","..","..",".."],"deeper_questions":["..","..","..",".."],"topics_to_avoid":["..","..",".."],"venue_suggestions":[{"name":"..","why":".."},{"name":"..","why":".."},{"name":"..","why":".."}],"tone":".."}'
+                " Tailor everything to both profiles. Keep each item concise and actionable. Tone is one short sentence describing the vibe to aim for."
+            )
+        ).with_model("openai", "gpt-4o")
+        body = (
+            f"Me: interests={user.get('interests',[])}; intentions={user.get('intentions')}; goals={user.get('growth_goals',[])}; dna={user.get('personality_dna',{})}\n"
+            f"Them: interests={other.get('interests',[])}; intentions={other.get('intentions')}; goals={other.get('growth_goals',[])}; dna={other.get('personality_dna',{})}\n"
+            f"Conversation so far (most recent 15): {snippet[:1500]}"
+        )
+        response = await chat.send_message(UserMessage(text=body))
+        data = extract_json(response)
+        # Validate shape minimally
+        required_keys = {"openers", "deeper_questions", "topics_to_avoid", "venue_suggestions", "tone"}
+        if not isinstance(data, dict) or not required_keys.issubset(set(data.keys())):
+            raise ValueError("Invalid script shape")
+        script = {
+            "openers": [str(x)[:160] for x in (data.get("openers") or [])][:4],
+            "deeper_questions": [str(x)[:200] for x in (data.get("deeper_questions") or [])][:4],
+            "topics_to_avoid": [str(x)[:160] for x in (data.get("topics_to_avoid") or [])][:3],
+            "venue_suggestions": [
+                {"name": str((v or {}).get("name", ""))[:80], "why": str((v or {}).get("why", ""))[:200]}
+                for v in (data.get("venue_suggestions") or [])
+            ][:3],
+            "tone": str(data.get("tone", ""))[:200],
+        }
+    except Exception as e:
+        logger.error(f"First-date script LLM error: {e}")
+        script = {
+            "openers": [
+                "What's been the highlight of your week so far?",
+                "Anything you've been geeking out about lately?",
+                "What's the last thing that made you laugh out loud?",
+                "If we got bored here, where would you wanna go next?",
+            ],
+            "deeper_questions": [
+                "What does a really good year look like for you?",
+                "What's something you used to believe that you've changed your mind on?",
+                "Who's been the biggest influence on how you live now?",
+                "What do you want more of in your life right now?",
+            ],
+            "topics_to_avoid": [
+                "Heavy ex talk before dessert",
+                "Career-ladder comparisons",
+                "Politics until you know each other better",
+            ],
+            "venue_suggestions": [
+                {"name": "Quiet wine bar or specialty coffee shop", "why": "Calm enough to hear each other, not too long if vibes are off."},
+                {"name": "Walk through a park or city neighborhood", "why": "Movement keeps conversation flowing and lowers awkwardness."},
+                {"name": "Casual share-plates restaurant", "why": "Shared food = easy bonding without the pressure of a long dinner."},
+            ],
+            "tone": "Curious, warm, low-stakes. Aim to leave them wanting one more conversation.",
+        }
+    record = {
+        "match_id": match_id,
+        "script": script,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.first_date_scripts.update_one({"match_id": match_id}, {"$set": record}, upsert=True)
+    return {"unlocked": True, "script": script, "generated_at": record["generated_at"], "cached": False}
+
+# ==================== BATCH C: WEEKLY SPARK CHALLENGE ====================
+
+# Rotating pool of weekly challenges. Each Monday a deterministic rotation picks the active one.
+WEEKLY_CHALLENGES = [
+    {"id": "wc1", "title": "Send a Bold Opener", "description": "Send the first message to a new match using something specific from their profile.", "xp": 50, "cta": "Send opener", "verb": "open"},
+    {"id": "wc2", "title": "Match Reignite", "description": "Reignite a stale chat that's been quiet for 48+ hours.", "xp": 60, "cta": "Reignite", "verb": "reignite"},
+    {"id": "wc3", "title": "Verify Yourself", "description": "Complete selfie verification this week.", "xp": 80, "cta": "Verify selfie", "verb": "verify_photo"},
+    {"id": "wc4", "title": "Map Your DNA", "description": "Complete the Personality DNA test.", "xp": 100, "cta": "Take DNA test", "verb": "personality_dna"},
+    {"id": "wc5", "title": "Plan a Real Date", "description": "Schedule a Post-Date Check-in with an emergency contact.", "xp": 70, "cta": "Schedule", "verb": "schedule_date"},
+    {"id": "wc6", "title": "Be Vulnerable", "description": "Answer 3 Icebreaker prompts on your profile.", "xp": 50, "cta": "Add icebreakers", "verb": "icebreakers"},
+    {"id": "wc7", "title": "Sign the Pledge", "description": "Sign the Anti-Ghosting Pledge.", "xp": 40, "cta": "Sign pledge", "verb": "pledge"},
+    {"id": "wc8", "title": "Wellness Check", "description": "Do your daily mood check-in for 5 days this week.", "xp": 60, "cta": "Check-in", "verb": "wellness"},
+    {"id": "wc9", "title": "Growth Mode", "description": "Add your top 3 growth goals to your profile.", "xp": 50, "cta": "Set goals", "verb": "growth_goals"},
+    {"id": "wc10", "title": "Background Lite", "description": "Complete the Background Lite identity check.", "xp": 90, "cta": "Verify", "verb": "background_lite"},
+    {"id": "wc11", "title": "Tour the Promise", "description": "Read the Our Promise + Algorithm Transparency pages.", "xp": 30, "cta": "Read", "verb": "promise"},
+    {"id": "wc12", "title": "Compliment, Don't Compare", "description": "Send a sincere compliment to one match (not about their looks).", "xp": 60, "cta": "Send compliment", "verb": "compliment"},
+]
+
+def _current_week_key() -> str:
+    """ISO year-week, e.g. '2026-W08'. Resets every Monday UTC."""
+    now = datetime.now(timezone.utc)
+    iso = now.isocalendar()
+    return f"{iso.year}-W{iso.week:02d}"
+
+def _active_challenge() -> dict:
+    """Pick a challenge based on ISO week number — deterministic rotation."""
+    now = datetime.now(timezone.utc)
+    idx = now.isocalendar().week % len(WEEKLY_CHALLENGES)
+    return WEEKLY_CHALLENGES[idx]
+
+def _xp_to_level(xp: int) -> dict:
+    """Convert XP to level using a gentle curve."""
+    # 100 XP/level for first 5 levels, then +50/level
+    levels = [0, 100, 200, 300, 400, 500, 650, 800, 1000, 1250, 1500, 1850, 2250, 2700]
+    level = 0
+    for i, threshold in enumerate(levels):
+        if xp >= threshold:
+            level = i
+    next_threshold = levels[min(level + 1, len(levels) - 1)] if level + 1 < len(levels) else levels[-1] + 500
+    return {
+        "level": level,
+        "xp_current": xp,
+        "xp_for_next": next_threshold,
+        "xp_in_level": xp - (levels[level] if level < len(levels) else levels[-1]),
+        "xp_needed_for_next": next_threshold - xp,
+    }
+
+@api_router.get("/challenges/weekly")
+async def get_weekly_challenge(user: dict = Depends(get_current_user)):
+    """Current week's challenge + the user's progress, XP, level, and badges."""
+    week_key = _current_week_key()
+    challenge = _active_challenge()
+    completion = await db.challenge_completions.find_one({
+        "user_id": user["id"],
+        "challenge_id": challenge["id"],
+        "week_key": week_key,
+    })
+    xp = user.get("xp", 0)
+    streak = user.get("streak_weeks", 0)
+    badges = user.get("challenge_badges", [])
+    return {
+        "week_key": week_key,
+        "challenge": challenge,
+        "completed": bool(completion),
+        "completed_at": completion["completed_at"] if completion else None,
+        "xp": xp,
+        "level_info": _xp_to_level(xp),
+        "streak_weeks": streak,
+        "badges": badges,
+    }
+
+@api_router.post("/challenges/{challenge_id}/complete")
+async def complete_challenge(challenge_id: str, user: dict = Depends(get_current_user)):
+    """Mark a challenge complete and award XP. Only the current active challenge counts toward the weekly streak."""
+    challenge = next((c for c in WEEKLY_CHALLENGES if c["id"] == challenge_id), None)
+    if not challenge:
+        raise HTTPException(status_code=404, detail="Challenge not found")
+    active = _active_challenge()
+    is_active = challenge_id == active["id"]
+    week_key = _current_week_key()
+
+    existing = await db.challenge_completions.find_one({
+        "user_id": user["id"],
+        "challenge_id": challenge_id,
+        "week_key": week_key,
+    })
+    if existing:
+        return {"already_completed": True, "xp": user.get("xp", 0), "level_info": _xp_to_level(user.get("xp", 0))}
+
+    award_xp = challenge["xp"]
+    await db.challenge_completions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "challenge_id": challenge_id,
+        "week_key": week_key,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "xp_awarded": award_xp,
+        "was_active_week": is_active,
+    })
+
+    new_xp = user.get("xp", 0) + award_xp
+    update = {"xp": new_xp}
+    new_badges = list(user.get("challenge_badges") or [])
+
+    # Update streak only for active weekly challenge
+    streak = user.get("streak_weeks", 0)
+    last_streak_week = user.get("last_streak_week")
+    if is_active:
+        # If user completed last week's challenge, increment; otherwise reset to 1
+        now = datetime.now(timezone.utc)
+        last_week_iso = (now - timedelta(weeks=1)).isocalendar()
+        last_week_key = f"{last_week_iso.year}-W{last_week_iso.week:02d}"
+        if last_streak_week == last_week_key:
+            streak += 1
+        else:
+            streak = 1
+        update["streak_weeks"] = streak
+        update["last_streak_week"] = week_key
+
+        # Streak-based badges
+        if streak == 4 and "Month of Sparks" not in new_badges: new_badges.append("Month of Sparks")
+        if streak == 12 and "Quarter Champion" not in new_badges: new_badges.append("Quarter Champion")
+        if streak == 52 and "Spark Year-One" not in new_badges: new_badges.append("Spark Year-One")
+
+    # Level-based badges
+    lvl = _xp_to_level(new_xp)["level"]
+    if lvl >= 5 and "Rising Spark" not in new_badges: new_badges.append("Rising Spark")
+    if lvl >= 10 and "Spark Pro" not in new_badges: new_badges.append("Spark Pro")
+
+    if new_badges != (user.get("challenge_badges") or []):
+        update["challenge_badges"] = new_badges
+
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {
+        "completed": True,
+        "xp_awarded": award_xp,
+        "xp": new_xp,
+        "level_info": _xp_to_level(new_xp),
+        "streak_weeks": streak if is_active else user.get("streak_weeks", 0),
+        "new_badges": [b for b in new_badges if b not in (user.get("challenge_badges") or [])],
+    }
+
+@api_router.get("/challenges/leaderboard")
+async def challenge_leaderboard(user: dict = Depends(get_current_user)):
+    """Top 10 users by XP. Returns minimal public profile info."""
+    top = await db.users.find(
+        {"xp": {"$gt": 0}},
+        {"_id": 0, "id": 1, "name": 1, "photos": 1, "xp": 1, "streak_weeks": 1, "challenge_badges": 1}
+    ).sort("xp", -1).limit(10).to_list(10)
+    me_rank = None
+    if user.get("xp", 0) > 0:
+        better = await db.users.count_documents({"xp": {"$gt": user.get("xp", 0)}})
+        me_rank = better + 1
+    return {
+        "leaderboard": [
+            {
+                "id": u["id"],
+                "name": u.get("name", "Anonymous"),
+                "photo": (u.get("photos") or [None])[0],
+                "xp": u.get("xp", 0),
+                "streak_weeks": u.get("streak_weeks", 0),
+                "badges_count": len(u.get("challenge_badges") or []),
+            }
+            for u in top
+        ],
+        "my_rank": me_rank,
+        "my_xp": user.get("xp", 0),
+    }
+
+@api_router.get("/challenges/history")
+async def challenge_history(user: dict = Depends(get_current_user)):
+    """User's completed challenges history (last 50)."""
+    items = await db.challenge_completions.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("completed_at", -1).limit(50).to_list(50)
+    # Attach challenge titles
+    by_id = {c["id"]: c for c in WEEKLY_CHALLENGES}
+    for i in items:
+        c = by_id.get(i.get("challenge_id"))
+        if c:
+            i["title"] = c["title"]
+            i["icon"] = c.get("verb", "spark")
+    return {"completions": items}
+
 # ==================== ROOT ====================
 
 @api_router.get("/")

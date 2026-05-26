@@ -5,6 +5,7 @@ import axios from "axios";
 import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { PersonalityDNAPage, PostDateCheckinPage, SafeZonesPage, LiveLocationSharePage, SelfieVerifyPage, BackgroundLitePage } from "./components/BatchBPages";
+import { CompatibilityTimelinePage, FirstDateScriptPage, WeeklyChallengePage } from "./components/BatchCPages";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -2306,6 +2307,22 @@ const ChatPage = () => {
             <Sparkles className="w-5 h-5 text-[#FF2E63]" />
           </button>
           <button 
+            onClick={() => navigate("/match/" + matchIdFromUrl + "/timeline")}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            data-testid="timeline-btn"
+            title="Compatibility Timeline"
+          >
+            <Sparkles className="w-5 h-5 text-purple-600" />
+          </button>
+          <button 
+            onClick={() => navigate("/chat/" + matchIdFromUrl + "/first-date-script")}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            data-testid="first-date-script-btn"
+            title="First Date Script"
+          >
+            <MessageCircle className="w-5 h-5 text-purple-600" />
+          </button>
+          <button 
             onClick={() => navigate("/safety/live-location/" + matchIdFromUrl)}
             className="p-2 hover:bg-gray-100 rounded-full"
             data-testid="live-location-btn"
@@ -2710,6 +2727,18 @@ const ProfilePage = () => {
               </span>
             </div>
             <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/challenges")}
+            className="w-full card-feature flex items-center justify-between bg-purple-100"
+            data-testid="weekly-challenge-link"
+          >
+            <div className="flex items-center gap-3">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+              <span className="font-bold">Weekly Spark Challenge</span>
+            </div>
+            <span className="badge-primary">XP + Badges</span>
           </button>
 
           <button 
@@ -4143,6 +4172,9 @@ function App() {
             <Route path="/safety/live-location/:matchId" element={<ProtectedRoute><LiveLocationSharePage /></ProtectedRoute>} />
             <Route path="/verify/selfie" element={<ProtectedRoute><SelfieVerifyPage /></ProtectedRoute>} />
             <Route path="/verify/background" element={<ProtectedRoute><BackgroundLitePage /></ProtectedRoute>} />
+            <Route path="/match/:matchId/timeline" element={<ProtectedRoute><CompatibilityTimelinePage /></ProtectedRoute>} />
+            <Route path="/chat/:matchId/first-date-script" element={<ProtectedRoute><FirstDateScriptPage /></ProtectedRoute>} />
+            <Route path="/challenges" element={<ProtectedRoute><WeeklyChallengePage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <HelpBubble />
