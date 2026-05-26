@@ -1355,7 +1355,10 @@ const DiscoverPage = () => {
   const [matchPopup, setMatchPopup] = useState(null);
   const [swipesRemaining, setSwipesRemaining] = useState(10);
   const [superLikesRemaining, setSuperLikesRemaining] = useState(1);
-  const { token } = useAuth();
+  const [lastSwipe, setLastSwipe] = useState(null);
+  const [boost, setBoost] = useState({ is_active: false, active_until: null, boosts_remaining_this_week: 0 });
+  const [boostSecondsLeft, setBoostSecondsLeft] = useState(0);
+  const { token, user } = useAuth();
   const navigate = useNavigate();
 
   const fetchProfiles = useCallback(async () => {
@@ -1370,9 +1373,49 @@ const DiscoverPage = () => {
     setLoading(false);
   }, [token]);
 
+  const fetchBoostStatus = useCallback(async () => {
+    try {
+      const res = await apiCall("get", "/me/boost/status", null, token);
+      setBoost(res);
+    } catch (e) {}
+  }, [token]);
+
   useEffect(() => {
     fetchProfiles();
-  }, [fetchProfiles]);
+    fetchBoostStatus();
+  }, [fetchProfiles, fetchBoostStatus]);
+
+  // Auto-record profile view when a card is displayed
+  useEffect(() => {
+    const p = profiles[currentIndex];
+    if (p?.id && token) {
+      apiCall("post", `/profile/view/${p.id}`, null, token).catch(() => {});
+    }
+  }, [profiles, currentIndex, token]);
+
+  // Boost countdown timer
+  useEffect(() => {
+    if (!boost.is_active || !boost.active_until) { setBoostSecondsLeft(0); return; }
+    const tick = () => {
+      const left = Math.max(0, Math.floor((new Date(boost.active_until).getTime() - Date.now()) / 1000));
+      setBoostSecondsLeft(left);
+      if (left <= 0) fetchBoostStatus();
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [boost.is_active, boost.active_until, fetchBoostStatus]);
+
+  const activateBoost = async () => {
+    try {
+      const res = await apiCall("post", "/me/boost", null, token);
+      setBoost({ is_active: true, active_until: res.boost_active_until, boosts_remaining_this_week: res.boosts_remaining_this_week });
+      toast.success("Boost active! You're top of stack for 30 minutes 🚀");
+    } catch (e) {
+      if (e.response?.status === 429) toast.error(e.response.data.detail);
+      else if (e.response?.status !== 402) toast.error("Boost failed");
+    }
+  };
 
   const handleSwipe = async (action) => {
     if (currentIndex >= profiles.length) return;
@@ -1392,6 +1435,8 @@ const DiscoverPage = () => {
         setSuperLikesRemaining(s => s - 1);
       }
 
+      setLastSwipe({ index: currentIndex, action, target: targetUser });
+
       if (res.is_match) {
         setMatchPopup(res.match);
       }
@@ -1403,6 +1448,20 @@ const DiscoverPage = () => {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Swipe failed");
       setSwiping(null);
+    }
+  };
+
+  const handleUndo = async () => {
+    if (!lastSwipe) { toast.error("Nothing to undo"); return; }
+    try {
+      await apiCall("post", "/swipe/undo", null, token);
+      setCurrentIndex(i => Math.max(0, i - 1));
+      if (lastSwipe.action === "super_like") setSuperLikesRemaining(s => s + 1);
+      else setSwipesRemaining(s => s + 1);
+      setLastSwipe(null);
+      toast.success("Undone!");
+    } catch (e) {
+      if (e.response?.status !== 402) toast.error("Couldn't undo");
     }
   };
 
@@ -1426,21 +1485,31 @@ const DiscoverPage = () => {
       <div data-testid="discover-page">
         {/* Stats Bar */}
         <div className="flex justify-between items-center mb-4">
-          <div className="flex gap-4">
+          <div className="flex gap-2 flex-wrap">
             <span className="badge-outline flex items-center gap-1">
               <Heart className="w-3 h-3" /> {swipesRemaining} swipes
             </span>
             <span className="badge-accent flex items-center gap-1">
               <Star className="w-3 h-3" /> {superLikesRemaining} super
             </span>
+            {boost.is_active && (
+              <span className="px-2 py-1 bg-[#FF2E63] text-white text-xs font-bold rounded-full border-2 border-black flex items-center gap-1" data-testid="boost-countdown">
+                <Zap className="w-3 h-3" /> Boost {Math.floor(boostSecondsLeft/60)}:{(boostSecondsLeft%60).toString().padStart(2,'0')}
+              </span>
+            )}
           </div>
-          <button 
-            onClick={() => navigate("/daily-picks")}
-            className="badge-primary flex items-center gap-1"
-            data-testid="daily-picks-btn"
-          >
-            <Sparkles className="w-3 h-3" /> Daily Picks
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={activateBoost}
+              disabled={boost.is_active}
+              className={`px-3 py-1.5 text-xs font-bold border-2 border-black rounded-full shadow-[2px_2px_0_#000] ${boost.is_active ? 'bg-gray-200 text-gray-400' : 'bg-[#CCFF00] hover:translate-y-0.5 hover:shadow-none'}`}
+              data-testid="boost-btn"
+              title={boost.is_active ? "Boost active" : `Boost (${boost.boosts_remaining_this_week} left this week)`}
+            >
+              <Zap className="w-3 h-3 inline mr-1" />
+              {boost.is_active ? "Boosted!" : "Boost"}
+            </button>
+          </div>
         </div>
 
         {/* Swipe Card */}
@@ -1545,7 +1614,16 @@ const DiscoverPage = () => {
 
         {/* Action Buttons */}
         {currentProfile && (
-          <div className="flex justify-center items-center gap-6 mt-6">
+          <div className="flex justify-center items-center gap-4 mt-6">
+            <button
+              onClick={handleUndo}
+              className="w-12 h-12 rounded-full bg-white border-2 border-black shadow-[3px_3px_0_#000] hover:translate-y-0.5 hover:shadow-[1px_1px_0_#000] flex items-center justify-center disabled:opacity-30"
+              disabled={!lastSwipe}
+              data-testid="undo-btn"
+              title="Undo last swipe (Premium)"
+            >
+              <ArrowLeft className="w-5 h-5 text-[#FFD400]" />
+            </button>
             <button 
               onClick={() => handleSwipe("pass")}
               className="action-btn-pass"
@@ -1750,7 +1828,16 @@ const LikesPage = () => {
   return (
     <AppLayout>
       <div data-testid="likes-page">
-        <h2 className="text-2xl font-bold mb-6" style={{ fontFamily: 'Syne' }}>Who Likes You</h2>
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Who Likes You</h2>
+          <button
+            onClick={() => navigate("/viewers")}
+            className="text-xs font-bold text-[#FF2E63] hover:underline inline-flex items-center gap-1"
+            data-testid="who-viewed-link"
+          >
+            <Eye className="w-3 h-3" /> Who viewed me →
+          </button>
+        </div>
 
         {likesData.is_premium_feature ? (
           <div className="card-brutal p-8 text-center">
@@ -3028,6 +3115,51 @@ const BugReportPage = () => {
   );
 };
 
+// ==================== PROFILE VIEWERS ====================
+const ViewersPage = () => {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [viewers, setViewers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    apiCall("get", "/me/viewers", null, token)
+      .then(r => setViewers(r.viewers || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [token]);
+  return (
+    <AppLayout>
+      <div data-testid="viewers-page" className="space-y-4">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Who Viewed You</h2>
+        <p className="text-gray-600 text-sm">People who checked you out in the last 30 days.</p>
+        {loading ? (
+          <div className="text-center py-8">Loading...</div>
+        ) : viewers.length === 0 ? (
+          <div className="card-brutal p-8 text-center">
+            <Eye className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="font-bold">No views yet</p>
+            <p className="text-sm text-gray-500">Boost your profile to get more eyes on you.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {viewers.map(v => (
+              <button key={v.id} onClick={() => navigate(`/profile/${v.id}`)}
+                className="card-brutal overflow-hidden text-left" data-testid={`viewer-${v.id}`}>
+                <img src={v.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=300"}
+                  className="w-full h-40 object-cover" alt={v.name} />
+                <div className="p-3">
+                  <p className="font-bold">{v.name}, {v.age}</p>
+                  <p className="text-xs text-gray-500">{v.view_count > 1 ? `Viewed ${v.view_count} times` : "Viewed once"}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </AppLayout>
+  );
+};
+
 // ==================== PROTECTED ROUTE ====================
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -3075,6 +3207,7 @@ function App() {
             <Route path="/subscription" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
             <Route path="/subscription/success" element={<ProtectedRoute><SubscriptionPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="/viewers" element={<ProtectedRoute><ViewersPage /></ProtectedRoute>}/>
             <Route path="/safety" element={<ProtectedRoute><SafetyPage /></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpPage /></ProtectedRoute>} />
             <Route path="/faq" element={<ProtectedRoute><FaqPage /></ProtectedRoute>} />

@@ -239,6 +239,29 @@ ADMIN_PREMIUM_EMAILS = {"deepthimarthi82@gmail.com", "vikaskesiraju@gmail.com"}
 
 import math
 import httpx
+import asyncio
+import resend
+
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+SUPPORT_INBOX = os.environ.get("SUPPORT_INBOX", "support@sparkmatch.dating")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
+
+async def send_email(to: str, subject: str, html: str, reply_to: Optional[str] = None) -> Optional[str]:
+    """Send an email via Resend. Returns email id or None on failure. Never raises."""
+    if not RESEND_API_KEY:
+        logger.warning(f"Resend not configured, skipping email to {to}")
+        return None
+    params = {"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html}
+    if reply_to:
+        params["reply_to"] = reply_to
+    try:
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        return result.get("id") if isinstance(result, dict) else None
+    except Exception as e:
+        logger.warning(f"Email send failed to {to}: {e}")
+        return None
 
 def haversine_distance(lat1, lon1, lat2, lon2, unit="mi"):
     """Distance between two lat/lng points."""
@@ -490,7 +513,15 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
         query["languages"] = {"$in": user["languages"]}
     
     # Get potential matches
-    profiles = await db.users.find(query, {"_id": 0, "password": 0, "email": 0}).limit(20).to_list(20)
+    profiles = await db.users.find(query, {"_id": 0, "password": 0, "email": 0}).limit(40).to_list(40)
+    
+    # Sort: boosted profiles first (active boost), then by last_active desc
+    now_iso = datetime.now(timezone.utc).isoformat()
+    def boost_active(p):
+        bu = p.get("boost_active_until")
+        return bool(bu and bu > now_iso)
+    profiles.sort(key=lambda p: (not boost_active(p), p.get("last_active") or ""), reverse=False)
+    profiles = profiles[:20]
     
     # Calculate compatibility + distance for each
     distance_unit = user.get("distance_unit", "mi")
@@ -508,6 +539,7 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
             distance_unit
         )
         profile["distance_unit"] = distance_unit
+        profile["is_boosted"] = boost_active(profile)
     
     return {
         "profiles": profiles,
@@ -624,6 +656,135 @@ async def swipe(action: SwipeAction, user: dict = Depends(get_current_user)):
         "is_match": is_match,
         "match": match_data
     }
+
+@api_router.post("/swipe/undo")
+async def undo_swipe(user: dict = Depends(get_current_user)):
+    """Undo your most recent swipe. Premium-only."""
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Undo Swipe", "message": "Upgrade to Premium to undo your last swipe."})
+    last = await db.swipes.find_one(
+        {"swiper_id": user["id"]},
+        {"_id": 0},
+        sort=[("created_at", -1)]
+    )
+    if not last:
+        raise HTTPException(status_code=404, detail="No swipes to undo")
+    # If this swipe created a match, remove the match
+    await db.matches.delete_many({
+        "$or": [
+            {"user1_id": user["id"], "user2_id": last["swiped_id"]},
+            {"user1_id": last["swiped_id"], "user2_id": user["id"]}
+        ],
+        "matched_at": {"$gte": last["created_at"]}
+    })
+    # Restore swipe count if it was decremented
+    if user.get("subscription") == "free":
+        if last["action"] == "super_like":
+            await db.users.update_one({"id": user["id"]}, {"$inc": {"daily_super_likes_remaining": 1}})
+        else:
+            await db.users.update_one({"id": user["id"]}, {"$inc": {"daily_swipes_remaining": 1}})
+    await db.swipes.delete_one({"id": last["id"]})
+    return {"undone": last["swiped_id"], "action": last["action"]}
+
+# ==================== PROFILE BOOST ====================
+
+@api_router.post("/me/boost")
+async def boost_profile(user: dict = Depends(get_current_user)):
+    """Activate Profile Boost — top of stack for 30 minutes. Premium-only, 1/week (3/week for VIP)."""
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Profile Boost", "message": "Upgrade to Premium to boost your profile."})
+    
+    is_vip = user.get("subscription") == "vip"
+    boost_limit = 3 if is_vip else 1
+    
+    now = datetime.now(timezone.utc)
+    week_ago = (now - timedelta(days=7)).isoformat()
+    used_this_week = await db.boost_events.count_documents({
+        "user_id": user["id"],
+        "created_at": {"$gte": week_ago}
+    })
+    if used_this_week >= boost_limit:
+        raise HTTPException(status_code=429, detail=f"You've used all {boost_limit} boosts this week. Resets in 7 days.")
+    
+    boost_until = (now + timedelta(minutes=30)).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"boost_active_until": boost_until}})
+    await db.boost_events.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "active_until": boost_until,
+        "created_at": now.isoformat()
+    })
+    return {"boost_active_until": boost_until, "boosts_remaining_this_week": boost_limit - used_this_week - 1}
+
+@api_router.get("/me/boost/status")
+async def boost_status(user: dict = Depends(get_current_user)):
+    """Check if user has an active boost + how many remain this week."""
+    is_premium = user.get("subscription", "free") != "free"
+    is_vip = user.get("subscription") == "vip"
+    boost_limit = 3 if is_vip else (1 if is_premium else 0)
+    
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    used_this_week = await db.boost_events.count_documents({"user_id": user["id"], "created_at": {"$gte": week_ago}})
+    
+    active_until = user.get("boost_active_until")
+    is_active = False
+    if active_until:
+        try:
+            is_active = datetime.fromisoformat(active_until) > datetime.now(timezone.utc)
+        except Exception:
+            is_active = False
+    
+    return {
+        "is_active": is_active,
+        "active_until": active_until if is_active else None,
+        "boosts_remaining_this_week": max(0, boost_limit - used_this_week),
+        "weekly_limit": boost_limit
+    }
+
+# ==================== PROFILE VIEWERS ====================
+
+@api_router.post("/profile/view/{target_user_id}")
+async def record_profile_view(target_user_id: str, user: dict = Depends(get_current_user)):
+    """Record that current user viewed target's profile. Idempotent within 1 hour."""
+    if target_user_id == user["id"]:
+        return {"recorded": False}
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    existing = await db.profile_views.find_one({
+        "viewer_id": user["id"],
+        "viewed_id": target_user_id,
+        "created_at": {"$gte": one_hour_ago}
+    })
+    if existing:
+        return {"recorded": False, "deduped": True}
+    await db.profile_views.insert_one({
+        "id": str(uuid.uuid4()),
+        "viewer_id": user["id"],
+        "viewed_id": target_user_id,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    return {"recorded": True}
+
+@api_router.get("/me/viewers")
+async def list_profile_viewers(user: dict = Depends(get_current_user)):
+    """See users who viewed your profile in the last 30 days. Premium-only."""
+    if user.get("subscription", "free") == "free":
+        raise HTTPException(status_code=402, detail={"premium_required": True, "feature": "Profile Viewers", "message": "Upgrade to Premium to see who viewed your profile."})
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    pipeline = [
+        {"$match": {"viewed_id": user["id"], "created_at": {"$gte": thirty_days_ago}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$viewer_id", "last_viewed_at": {"$first": "$created_at"}, "view_count": {"$sum": 1}}},
+        {"$limit": 100}
+    ]
+    rows = await db.profile_views.aggregate(pipeline).to_list(100)
+    viewer_ids = [r["_id"] for r in rows]
+    viewers = await db.users.find({"id": {"$in": viewer_ids}}, {"_id": 0, "password": 0, "email": 0}).to_list(100)
+    by_id = {v["id"]: v for v in viewers}
+    result = []
+    for r in rows:
+        if r["_id"] in by_id:
+            result.append({**by_id[r["_id"]], "last_viewed_at": r["last_viewed_at"], "view_count": r["view_count"]})
+    return {"viewers": result, "total": len(result)}
 
 # ==================== MATCHES ====================
 
@@ -1369,10 +1530,23 @@ async def create_support_ticket(ticket: SupportTicketCreate, user: dict = Depend
         "message": ticket.message,
         "urgent": ticket.urgent,
         "status": "open",
-        "deliver_to": "support@sparkmatch.dating",
+        "deliver_to": SUPPORT_INBOX,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.support_tickets.insert_one(record)
+    # Fire-and-forget emails (non-blocking)
+    urgency = "🚨 URGENT — " if ticket.urgent else ""
+    inbox_html = f"""<h2>{urgency}New Support Ticket — {ticket.issue_type}</h2>
+<p><b>From:</b> {ticket.name} &lt;{ticket.email}&gt;</p>
+<p><b>Ticket ID:</b> {record['id']}</p>
+<p><b>Message:</b></p><blockquote>{ticket.message}</blockquote>"""
+    asyncio.create_task(send_email(SUPPORT_INBOX, f"{urgency}[{ticket.issue_type}] {ticket.name}", inbox_html, reply_to=ticket.email))
+    ack_html = f"""<h2>We got your message!</h2>
+<p>Hi {ticket.name},</p>
+<p>Thanks for reaching out to Spark Match. Our team will review your <b>{ticket.issue_type}</b> ticket and reply within 24 hours.</p>
+<p><b>Ticket ID:</b> {record['id']}</p>
+<p>Love,<br/>The Spark Team</p>"""
+    asyncio.create_task(send_email(ticket.email, f"We got your message — ticket #{record['id'][:8]}", ack_html))
     return {"message": "Got it! Our team will email you back within 24h.", "ticket_id": record["id"]}
 
 @api_router.post("/support/bug-report")
@@ -1387,10 +1561,17 @@ async def create_bug_report(report: BugReportCreate, user: dict = Depends(get_cu
         "page_url": report.page_url,
         "browser": report.browser,
         "status": "open",
-        "deliver_to": "support@sparkmatch.dating",
+        "deliver_to": SUPPORT_INBOX,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.bug_reports.insert_one(record)
+    inbox_html = f"""<h2>🐛 New Bug Report</h2>
+<p><b>User:</b> {user.get('email')}</p>
+<p><b>Page:</b> {report.page_url or 'unknown'}</p>
+<p><b>Browser:</b> {report.browser or 'unknown'}</p>
+<p><b>Description:</b></p><blockquote>{report.description}</blockquote>
+{'<p><b>Screenshot attached inline in DB record.</b></p>' if report.screenshot_data_url else ''}"""
+    asyncio.create_task(send_email(SUPPORT_INBOX, f"[Bug] {report.description[:60]}", inbox_html, reply_to=user.get("email")))
     return {"message": "Bug report submitted. Thank you!", "report_id": record["id"]}
 
 @api_router.get("/support/faq")

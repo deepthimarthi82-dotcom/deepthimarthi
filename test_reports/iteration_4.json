@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 4 backend testing for Spark dating app: Resend graceful failure on placeholder key, Profile Boost (POST/GET /api/me/boost + /status with weekly limits 1 premium / 3 VIP), Profile Viewers (POST /api/profile/view/{id} idempotent within 1 hour + GET /api/me/viewers premium-only), and Undo Swipe (premium-only, deletes swipe + cleans match). 17/17 tests in /app/backend/tests/test_iteration4.py PASSED. Resend errors are caught and logged as WARNING (no traceback), tickets persisted to db.support_tickets and db.bug_reports with deliver_to=support@sparkmatch.dating. VIP 4x boost call correctly returns 429. /api/me/viewers does NOT collide with /api/profile/{id} route (no 'User not found' error). Discover correctly sorts boosted profiles first and exposes is_boosted boolean.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/swipe/undo", "issue": "The 'restore swipe count' branch (lines 681-685) is dead code — it checks `subscription == 'free'` but the earlier gate at line 663 already 402s free users. As a result, undo never restores daily_swipes_remaining for anyone. Since premium users have unlimited swipes (no decrement in /api/swipe), this is currently harmless, but the intent in spec ('restores count') is not implemented for the case where a premium user might be downgraded to free later."},
+      {"endpoint": "GET /api/discover sort", "issue": "Sort key is (not boost_active, last_active) with reverse=False — last_active strings end up sorted ASCENDING (oldest first). Boosted-first ordering works, but among non-boosted profiles the oldest last_active wins, which is the opposite of the intended 'most recently active first'."},
+      {"endpoint": "GET /api/me/boost/status", "issue": "Free users get weekly_limit=0 (correct) but no premium_required hint. Not a bug per spec; just noting."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "TestSupportEmailGracefulFailure::test_support_contact_saves_ticket_no_error — POST /api/support/contact returns 200, ticket persisted with deliver_to=support@sparkmatch.dating despite Resend placeholder key",
+    "TestSupportEmailGracefulFailure::test_bug_report_saves_no_error — POST /api/support/bug-report returns 200, persisted",
+    "TestProfileBoost::test_boost_free_returns_402 — premium_required=true",
+    "TestProfileBoost::test_boost_vip_success — admin VIP, boost_active_until set, boosts_remaining_this_week=2",
+    "TestProfileBoost::test_boost_status_vip_active — is_active=true, weekly_limit=3 after boost",
+    "TestProfileBoost::test_boost_status_free — weekly_limit=0, is_active=false",
+    "TestProfileBoost::test_boost_vip_4th_call_429 — 1st/2nd/3rd succeed, 4th returns 429 with message containing '3'",
+    "TestProfileViewers::test_view_self_not_recorded — POST /api/profile/view/{self_id} -> {recorded:false}",
+    "TestProfileViewers::test_view_target_idempotent — first call {recorded:true}, second within 1h {recorded:false, deduped:true}",
+    "TestProfileViewers::test_viewers_free_returns_402 — premium_required=true",
+    "TestProfileViewers::test_viewers_vip_returns_list_no_user_not_found — VIP gets {viewers:[...], total:N}, demo1 present with view_count + last_viewed_at + name (NO 'User not found' route collision)",
+    "TestUndoSwipe::test_undo_free_returns_402 — premium_required=true",
+    "TestUndoSwipe::test_undo_premium_success — bumped demo1 to premium, swiped fresh target, undo returns {undone, action:'like'}, swipe row deleted",
+    "TestUndoSwipe::test_undo_premium_match_cleanup — mutual like created match, undo deleted both swipe AND match record",
+    "TestDiscoverBoosted::test_discover_has_is_boosted_field — every profile has boolean is_boosted",
+    "TestDiscoverBoosted::test_discover_boosted_profiles_appear_first — synthetic boosted male candidate sorted to position 0 of demo1's discover",
+    "TestMeViewersNoUserNotFoundCollision::test_me_viewers_not_treated_as_profile_id — route ordering verified (402 for free, 200 for VIP, never 404)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration_4_results.xml"
+  ],
+  "action_items": [
+    "Consider removing dead code in /api/swipe/undo lines 681-685 (the `if user.get('subscription') == 'free':` branch can never execute because of the 402 gate above) OR move the gate after the count-restore so a future downgrade-from-premium scenario is handled.",
+    "Discover sort: `profiles.sort(key=lambda p: (not boost_active(p), p.get('last_active') or ''), reverse=False)` sorts last_active ASCENDING. To get boosted-first then most-recently-active, use a negative-string trick or split into two sorted lists.",
+    "server.py is now 1694 lines (was 1514) — continue tracking the >700 split recommendation (boost/viewers/undo/support routers).",
+    "Resend integration: confirmed graceful — `send_email` catches Exception and `asyncio.create_task` ensures non-blocking. When a real RESEND_API_KEY is provided, no code change is needed."
+  ],
+  "critical_code_review_comments": [
+    "Dead branch in undo_swipe: lines 681-685 unreachable due to 402 gate at line 663-664.",
+    "Boost rate-limit uses `db.boost_events.count_documents` with $gte on ISO string — works because ISO 8601 lexical order == chronological order, but a tz-aware index would be more explicit.",
+    "/api/me/viewers $group aggregation uses `$first` on already-sorted-DESC pipeline so last_viewed_at is correct. Good. But there's no pagination — capped at 100 viewers hard-coded.",
+    "send_email returns None on placeholder key but doesn't expose any signal to the caller — tickets must rely solely on DB persistence to know they're 'received', which works.",
+    "/api/profile/view/{target_user_id} does NOT validate that target_user_id exists in db.users — a malicious client could spam profile_views with junk IDs. Add an existence check or unique index.",
+    "Discover ASCENDING last_active sort (see action items)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 17 tests)",
+    "/app/test_reports/pytest/iteration_4_results.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "demo1@spark.app/password123 (Emma, woman, free), demo2@spark.app/password123 (James, man, free), deepthimarthi82@gmail.com/Spark2026! (admin VIP).",
+  "seed_data_creation": "Fresh test users created per test (iter4_target_*, iter4_match_*, iter4_boost_*) and cleaned up in the same test (db.users.delete_one + db.swipes.delete_many). Boost events for admin cleaned between tests via autouse fixture. Support tickets + bug reports accumulate (prefixed 'TEST iter4') and are NOT cleaned. demo1 subscription is temporarily set to 'premium' for undo tests and restored to 'free' in finally blocks.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration 4 features (Resend graceful, Boost, Viewers, Undo Swipe) all green. Resend WARNING logs in supervisor are expected ('API key is invalid' — placeholder). Run: pytest /app/backend/tests/test_iteration4.py -v. The autouse fixture clears admin's boost_events between tests — if you add more tests using boosts, account for this. demo1 may have its subscription temporarily set to premium during undo tests; finally block always restores to original. Match between demo1<->demo2 (0a019632-6f9f-45ab-8fb6-20601b4e60f3) is NOT touched in this iteration.",
+  "mocked_apis_status": "Resend email delivery is intentionally mocked-by-placeholder (RESEND_API_KEY=re_xxxxxxxxx). Server handles failures gracefully — tickets still save, no 500 errors. MOCKED."
+}
