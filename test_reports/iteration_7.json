@@ -1,0 +1,96 @@
+{
+  "summary": "Iteration 7 — Batch B (Personality DNA, Post-Date Check-in, Safe Zones + Live Location, Selfie Verify, Background Lite) plus 3 iter-6 fix regressions. Backend: 23/24 pytest pass (1 bug found in personality compatibility 404). Frontend smoke: all 5 profile entry-points visible + all 5 new routes render successfully (archetype card, selfie camera CTA, bg-verified state, 15 safe zones rendered, post-date schedule form with match dropdown of 2 options).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/personality/compatibility/{target_user_id}", "issue": "Returns 404 'User not found' when target user EXISTS but has no personality_dna/personality_archetype fields. Root cause: `db.users.find_one({'id': target}, {'_id':0, 'personality_dna':1, 'personality_archetype':1})` returns an empty dict `{}` for docs missing both fields (since _id is excluded). The `if not target` check then mistakes empty-dict for missing user and 404s. Spec required this case to return `{both_completed: false, score: null}` so the UI can prompt 'Both users need to complete Personality DNA'. Fix: include `id` in the projection (or check existence first), e.g. project `{'_id':0,'id':1,'personality_dna':1,'personality_archetype':1}` or `db.users.count_documents({'id':target})==0` for the 404 path. Reproduction: any logged-in user calls compatibility against a user who hasn't taken the quiz → 404 instead of graceful response.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/profile/selfie-verify", "issue": "Vision call sends the primary_photo as a TEXT URL inside the prompt body (concatenated as a string) rather than as an actual image attachment in the LLM message. With current EmergentLLM/LlmChat SDK only text is sent — GPT-4o cannot actually 'see' either photo. The comparison is effectively a hallucinated guess from URL strings, not real vision. Confidence values are not trustworthy. To deliver true selfie verification, wrap both images via the SDK's image content blocks (e.g. ImageContent(url=primary_photo) + ImageContent(data=selfie_data_url)) or fallback to a deterministic non-LLM heuristic."},
+      {"endpoint": "POST /api/safety/post-date-checkin", "issue": "auto_notify_at uses `max(15, min(720, payload.grace_minutes))` so callers passing grace_minutes outside 15..720 silently get clamped without a 400. Either reject out-of-range or document the clamp in OpenAPI."},
+      {"endpoint": "POST /api/profile/background-lite", "issue": "Endpoint accepts ANY full_legal_name string (including empty after trim) — no min length check. `'  ' (whitespace)` would still hash + grant the badge. Add `if not payload.full_legal_name.strip(): raise 400`."},
+      {"endpoint": "POST /api/profile/background-lite", "issue": "DOB allows future dates (e.g. '2099-01-01' → age computed as negative which is < 18 → 400, so functionally protected, but the error message is misleading: 'You must be 18 or older' instead of 'Invalid DOB'. Cosmetic only."},
+      {"endpoint": "GET /api/safety/share-location/{match_id}", "issue": "When the OTHER user's share has expired, response returns `{sharing:false, expired:true}` but does NOT delete the stale row. Over time db.location_shares accumulates expired records. Add a delete on expiry or a TTL index on expires_at."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Post-Date Check-in form", "issues": ["Native browser datetime-local input used instead of a shadcn DateTime picker — inconsistent with rest of app's design system."]}
+    ],
+    "hydration_warnings": [
+      "React hydration warning: <span> appearing as direct child of <select> and <option> somewhere in the app shell (logged on /profile and route navigation). Not a hard crash but should be fixed to silence noise."
+    ]
+  },
+  "passed_tests": [
+    "TestPersonalityDNA.questions_shape: 10 questions, 5 OCEAN traits",
+    "TestPersonalityDNA.partial_rejected: 2 answers → 400",
+    "TestPersonalityDNA.full_and_get: 10 'a' answers → 0-100 trait scores + archetype + personality_complete=True; GET echoes",
+    "TestPersonalityDNA.compat_both_complete: both completed → score 0-100, weighted=int(score*0.40)",
+    "TestPersonalityDNA.discover_includes_personality_score: every profile in /discover has personality_score key",
+    "TestPostDateCheckin.missing_contact_400: demo2 without email/phone → 400",
+    "TestPostDateCheckin.create_confirm_snooze_flow: auto_notify_at = sched + grace; snooze +30m; list shows record; confirm → status=confirmed_safe in DB",
+    "TestPostDateCheckin.run_alerts_overdue: overdue scheduled → alerted=true, status=alerted; idempotent on 2nd call",
+    "TestSafeZones.zones_list: 15 zones + 5 guidance items",
+    "TestSafeZones.zones_with_city: ?city=Austin sets city on every zone",
+    "TestSafeZones.share_location_match_required: bogus match_id → 403",
+    "TestSafeZones.share_location_lifecycle: share→partner reads lat/lng→DELETE→partner sees sharing=false",
+    "TestSelfieVerify.no_photos_400: empty photos[] → 400",
+    "TestSelfieVerify.non_data_url_400: https URL → 400",
+    "TestSelfieVerify.too_large_400: >2.5MB payload → 400",
+    "TestSelfieVerify.valid_call_returns_shape_no_false_verify: returns {verified, confidence, reason}; no false positive on tiny 1x1 PNG",
+    "TestBackgroundLite.bad_dob_format_400: '01/01/1990' → 400",
+    "TestBackgroundLite.underage_400: 2015 DOB → 400",
+    "TestBackgroundLite.success_sets_flag_and_badge: returns verified=true; DB stores sha256 hash only (raw name absent); /profile/badges includes background_lite",
+    "TestBadges.shape: badges list with id+label+tier",
+    "TestIter6Fixes.todays_spark_match_reasons_on_cached: 2 calls — both responses include match_reasons (iter-6 minor fix applied ✓)",
+    "TestIter6Fixes.reignite_returns_3_topics: real LLM returned exactly 3 non-empty topic strings",
+    "TestIter6Fixes.transparency_max_110: with all flags + 45 days old user, authenticity_score == 110 ✓"
+  ],
+  "failed_tests": [
+    "TestPersonalityDNA.compat_other_incomplete: expected 200 + both_completed=false; got 404 — see critical bug above."
+  ],
+  "frontend_smoke": {
+    "entry_points_visible": ["personality-dna-link", "selfie-verify-link", "bg-lite-link", "safe-zones-link", "post-date-checkin-link"],
+    "routes_render": {
+      "/personality-dna": "archetype-card visible (demo1 already mapped)",
+      "/verify/selfie": "start-camera-btn visible",
+      "/verify/background": "bg-verified-state visible (demo1 already verified during earlier curl)",
+      "/safety/zones": "zones-list + find-zones-btn visible, 15 zones rendered",
+      "/safety/post-date-checkin": "schedule-form + match-select visible (2 match options)"
+    }
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7.py",
+    "/app/test_reports/pytest/iteration_7_results.xml"
+  ],
+  "action_items": [
+    "FIX HIGH: /api/personality/compatibility — change projection to include `id` field (or do existence check separately), so users without DNA return both_completed=false instead of 404. Otherwise any UI 'See compatibility' button against a user who hasn't taken the quiz will show 'User not found' error instead of the friendly prompt.",
+    "Selfie verify: actually attach images via LlmChat ImageContent blocks (or document that current vision is text-only and effectively heuristic).",
+    "Background-lite: reject empty/whitespace full_legal_name with 400.",
+    "Post-date-checkin: either reject out-of-range grace_minutes or document the silent 15..720 clamp.",
+    "share-location: delete row on expiry-read OR add TTL index on expires_at.",
+    "Frontend: fix hydration warning (<span> nested under <select>/<option>) on /profile and routes.",
+    "Frontend (cosmetic): replace native datetime-local input on post-date check-in form with shadcn DateTime picker for design consistency."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 2878 lines — Batch B adds another ~480 lines, even more overdue for router split (raised in iter5 and iter6 reports).",
+    "Selfie verify endpoint hits LLM synchronously inside the request — 60s+ latency on slow days. Move to background job + status polling for production.",
+    "PERSONALITY_QUESTIONS, SAFE_ZONES_SEED, GROWTH_GOAL_OPTIONS, ICEBREAKER_QUESTIONS all hardcoded inside server.py — move to a constants module so frontend i18n + admin tooling share one source of truth.",
+    "_archetype heuristic uses chained if/elif which means later rules never fire for users matching earlier ones; consider a score-and-rank approach for fairer archetype assignment.",
+    "Background-lite stores `id_last4` field but never validates length 4 / digits-only. If a frontend mistakenly posts a full ID number it'd be saved verbatim — privacy regression.",
+    "run_post_date_alerts iterates pending checkins and `asyncio.create_task(send_email(...))` without awaiting — if Resend errors, exceptions are swallowed and may show up only in logs. Add a wrapper that logs failures.",
+    "/api/personality/compatibility leaks target's archetype back to caller — fine for matched users, but exposed for ANY user_id since there's no match check. Tighten to only return archetype if there's a match or both have opted-in."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7.py (new — 24 tests, 23 green, 1 fail catching real bug)",
+    "/app/test_reports/pytest/iteration_7_results.xml (new junit xml)"
+  ],
+  "success_rate": {"backend": "95.8% (23/24)", "frontend": "100% (all 5 entry-points + 5 routes render)"},
+  "test_credentials": "demo1@spark.app/password123 (DNA + bg-lite already done in earlier curl); demo2@spark.app/password123 (DNA done — used for bg-lite + transparency-110 test, restored).",
+  "seed_data_creation": "All tests clean up after themselves: (1) demo1.todays_spark_user_id/date unset to force fresh compute (auto-reset on next call); (2) demo2.background_lite flags unset + db.background_checks for demo2 cleared before bg-lite success test; (3) for missing-contact 400 test, demo2 emergency_contact_email/phone are unset (left unset because demo2 had no contact originally); (4) test_compat_other_incomplete unsets demo3.personality_dna (demo3 had no DNA anyway, no restore needed); (5) test_transparency_max_110 backs up + restores demo2's prior bio/created_at/quiz_complete/anti_ghosting_pledge/photo_verified/video_verified/selfie_verified; (6) location_shares row for demo1 deleted via API; (7) overdue post_date_checkin row deleted in finally. No cross-test pollution observed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/test_iteration7.py -v` (~9s, real LLM call ~3s for selfie + ~3s for reignite). After main agent fixes the personality_compat 404 projection bug, re-run TestPersonalityDNA.test_compat_other_incomplete only — it expects 200 with both_completed=false. /api/transparency authenticity scoring now: photo/video_verified=30 + selfie=10 + bio>=60=20 + quiz=20 + pledge=10 + days_on_app(>=30)=20 → max 110 (was 100 in iter6). demo1 and demo2 both have personality_dna completed (10x choice 'a' for demo1, 10x 'b' for demo2). demo2 has background_lite_verified=True (TEST-prefixed name). Match id between demo1/demo2 is 0a019632-6f9f-45ab-8fb6-20601b4e60f3. Frontend hydration warning re: <span> in <select> is unfixed but does not break functionality.",
+  "rca_of_the_issue": "Personality compatibility 404 bug RCA: MongoDB's find_one with a projection that includes ONLY fields the document doesn't have returns an empty dict `{}` (the `_id` is also excluded here). In Python, `if not {}` is True, so the code path mistakenly raises 404 'User not found' even though the user IS present in the DB — they just haven't filled out the quiz. Reproduction: pick any user id that has not completed personality_dna, call GET /api/personality/compatibility/{that_user_id} as a logged-in user → returns 404. Mitigation: change the projection in server.py:2532 to `{'_id': 0, 'id': 1, 'personality_dna': 1, 'personality_archetype': 1}` so the doc is never empty when the user exists, OR do an existence check first via `count_documents`."
+}

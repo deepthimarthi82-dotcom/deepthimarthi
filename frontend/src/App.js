@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, useSe
 import axios from "axios";
 import { Heart, X, Star, MessageCircle, User, Settings, Shield, Zap, Crown, ChevronRight, ChevronLeft, Check, Camera, Mic, Video, MapPin, Clock, AlertCircle, Sparkles, Calendar, Coffee, Send, ArrowLeft, Eye, Lock, Play, Pause } from "lucide-react";
 import { Toaster, toast } from "sonner";
+import { PersonalityDNAPage, PostDateCheckinPage, SafeZonesPage, LiveLocationSharePage, SelfieVerifyPage, BackgroundLitePage } from "./components/BatchBPages";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -2305,6 +2306,14 @@ const ChatPage = () => {
             <Sparkles className="w-5 h-5 text-[#FF2E63]" />
           </button>
           <button 
+            onClick={() => navigate("/safety/live-location/" + matchIdFromUrl)}
+            className="p-2 hover:bg-gray-100 rounded-full"
+            data-testid="live-location-btn"
+            title="Share live location"
+          >
+            <MapPin className="w-5 h-5 text-[#FF2E63]" />
+          </button>
+          <button 
             onClick={() => navigate("/safety/checkin/" + matchIdFromUrl)}
             className="p-2 hover:bg-gray-100 rounded-full"
             data-testid="safety-btn"
@@ -2699,6 +2708,68 @@ const ProfilePage = () => {
               <span className="font-bold">
                 {user?.subscription === "free" ? "Upgrade to Premium" : `${user?.subscription?.toUpperCase()} Plan`}
               </span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/personality-dna")}
+            className="w-full card-feature flex items-center justify-between bg-yellow-100"
+            data-testid="personality-dna-link"
+          >
+            <div className="flex items-center gap-3">
+              <Sparkles className="w-5 h-5 text-[#FF2E63]" />
+              <span className="font-bold">
+                {user?.personality_complete ? `Personality DNA · ${user.personality_archetype || ""}` : "Map your Personality DNA"}
+              </span>
+            </div>
+            <span className="badge-primary">+40% match score</span>
+          </button>
+
+          <button 
+            onClick={() => navigate("/verify/selfie")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="selfie-verify-link"
+          >
+            <div className="flex items-center gap-3">
+              <Camera className="w-5 h-5 text-[#00CC66]" />
+              <span className="font-bold">{user?.selfie_verified ? "Photo Verified ✓" : "Verify with selfie"}</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/verify/background")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="bg-lite-link"
+          >
+            <div className="flex items-center gap-3">
+              <Shield className="w-5 h-5 text-[#00CC66]" />
+              <span className="font-bold">{user?.background_lite_verified ? "Background Lite ✓" : "Background Lite check"}</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/safety/zones")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="safe-zones-link"
+          >
+            <div className="flex items-center gap-3">
+              <MapPin className="w-5 h-5 text-[#FF2E63]" />
+              <span className="font-bold">Safe Meeting Zones</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/safety/post-date-checkin")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="post-date-checkin-link"
+          >
+            <div className="flex items-center gap-3">
+              <Shield className="w-5 h-5 text-[#FF2E63]" />
+              <span className="font-bold">Post-Date Check-in</span>
             </div>
             <ChevronRight className="w-5 h-5" />
           </button>
@@ -4066,6 +4137,12 @@ function App() {
             <Route path="/faq" element={<ProtectedRoute><FaqPage /></ProtectedRoute>} />
             <Route path="/support/contact" element={<ProtectedRoute><ContactSupportPage /></ProtectedRoute>} />
             <Route path="/support/bug" element={<ProtectedRoute><BugReportPage /></ProtectedRoute>} />
+            <Route path="/personality-dna" element={<ProtectedRoute><PersonalityDNAPage /></ProtectedRoute>} />
+            <Route path="/safety/post-date-checkin" element={<ProtectedRoute><PostDateCheckinPage /></ProtectedRoute>} />
+            <Route path="/safety/zones" element={<ProtectedRoute><SafeZonesPage /></ProtectedRoute>} />
+            <Route path="/safety/live-location/:matchId" element={<ProtectedRoute><LiveLocationSharePage /></ProtectedRoute>} />
+            <Route path="/verify/selfie" element={<ProtectedRoute><SelfieVerifyPage /></ProtectedRoute>} />
+            <Route path="/verify/background" element={<ProtectedRoute><BackgroundLitePage /></ProtectedRoute>} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           <HelpBubble />

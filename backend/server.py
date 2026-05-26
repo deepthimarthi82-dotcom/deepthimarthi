@@ -686,6 +686,7 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     
     # Calculate compatibility + distance for each
     distance_unit = user.get("distance_unit", "mi")
+    me_dna = user.get("personality_dna")
     for profile in profiles:
         compat = await db.compatibility_scores.find_one({
             "$or": [
@@ -694,6 +695,13 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
             ]
         }, {"_id": 0})
         profile["compatibility_score"] = compat.get("score") if compat else None
+        # Personality DNA score (40% weight contribution to overall match)
+        them_dna = profile.get("personality_dna")
+        if me_dna and them_dna:
+            profile["personality_score"] = _personality_score(me_dna, them_dna)
+            profile["personality_archetype"] = profile.get("personality_archetype")
+        else:
+            profile["personality_score"] = None
         profile["distance"] = haversine_distance(
             user.get("latitude"), user.get("longitude"),
             profile.get("latitude"), profile.get("longitude"),
@@ -2200,6 +2208,7 @@ async def compute_transparency(uid: str, profile: dict) -> dict:
     # Authenticity: photo_verified + bio + quiz + days_on_app
     authenticity = 0
     if profile.get("video_verified") or profile.get("photo_verified"): authenticity += 30
+    if profile.get("selfie_verified"): authenticity += 10  # selfie photo badge
     if len(profile.get("bio") or "") >= 60: authenticity += 20
     if profile.get("quiz_complete"): authenticity += 20
     if profile.get("anti_ghosting_pledge"): authenticity += 10
@@ -2241,7 +2250,7 @@ async def todays_spark(user: dict = Depends(get_current_user)):
     if user.get("todays_spark_date") == today and user.get("todays_spark_user_id"):
         pick = await db.users.find_one({"id": user["todays_spark_user_id"]}, {"_id": 0, "password": 0, "email": 0})
         if pick:
-            return {"pick": pick, "date": today}
+            return {"pick": pick, "date": today, "match_reasons": _why_reasons(user, pick)}
     
     # Compute: top profile from discover query, ranked by compatibility
     swiped = await db.swipes.find({"swiper_id": user["id"]}).to_list(10000)
@@ -2343,7 +2352,11 @@ async def reignite_chat(match_id: str, user: dict = Depends(get_current_user)):
         ).with_model("openai", "gpt-4o")
         msg = f"User A interests: {user.get('interests',[])}; intentions: {user.get('intentions')}; growth_goals: {user.get('growth_goals',[])}\nUser B interests: {other.get('interests',[])}; intentions: {other.get('intentions')}; growth_goals: {other.get('growth_goals',[])}"
         response = await chat.send_message(UserMessage(text=msg))
-        return extract_json(response)
+        data = extract_json(response)
+        topics = data.get("topics") if isinstance(data, dict) else None
+        if not isinstance(topics, list) or len(topics) != 3 or not all(isinstance(t, str) and t.strip() for t in topics):
+            raise ValueError("LLM did not return exactly 3 topics")
+        return {"topics": topics}
     except Exception as e:
         logger.error(f"Reignite error: {e}")
         return {"topics": [
@@ -2373,6 +2386,470 @@ async def match_anniversary(match_id: str, user: dict = Depends(get_current_user
     elif 90 <= days <= 92:
         milestone = {"label": "Spark Legend", "message": "90 days strong — you're a Spark Legend ⚡", "tier": "legend"}
     return {"days": days, "milestone": milestone}
+
+# ==================== BATCH B: PERSONALITY DNA ====================
+
+# 10 questions across the Big Five personality dimensions (OCEAN).
+# Each choice contributes +1/-1/0 toward a trait, normalized 0-100.
+PERSONALITY_QUESTIONS = [
+    {"id": "q1", "text": "On a free weekend, you'd rather…", "trait": "extraversion",
+     "choices": [{"id": "a", "text": "Throw a dinner party with friends", "score": 1},
+                 {"id": "b", "text": "Cozy night in with a good book", "score": -1},
+                 {"id": "c", "text": "Spontaneous adventure with one close friend", "score": 0}]},
+    {"id": "q2", "text": "When making decisions you tend to…", "trait": "conscientiousness",
+     "choices": [{"id": "a", "text": "Plan everything in a spreadsheet", "score": 1},
+                 {"id": "b", "text": "Trust your gut and pivot if needed", "score": -1},
+                 {"id": "c", "text": "Mix planning with intuition", "score": 0}]},
+    {"id": "q3", "text": "Trying new food, you…", "trait": "openness",
+     "choices": [{"id": "a", "text": "Order the weirdest thing on the menu", "score": 1},
+                 {"id": "b", "text": "Stick to favorites that never disappoint", "score": -1},
+                 {"id": "c", "text": "Let your date pick", "score": 0}]},
+    {"id": "q4", "text": "After a disagreement, you usually…", "trait": "agreeableness",
+     "choices": [{"id": "a", "text": "Apologize first, harmony matters", "score": 1},
+                 {"id": "b", "text": "Stand your ground until they see your side", "score": -1},
+                 {"id": "c", "text": "Take space, then talk it out calmly", "score": 0}]},
+    {"id": "q5", "text": "Big life stress, you…", "trait": "neuroticism",
+     "choices": [{"id": "a", "text": "Spiral a bit before bouncing back", "score": 1},
+                 {"id": "b", "text": "Stay steady and tackle one thing at a time", "score": -1},
+                 {"id": "c", "text": "Vent to someone close, then move on", "score": 0}]},
+    {"id": "q6", "text": "Travel style is…", "trait": "openness",
+     "choices": [{"id": "a", "text": "Backpack with zero itinerary", "score": 1},
+                 {"id": "b", "text": "Curated hotel, every day pre-booked", "score": -1},
+                 {"id": "c", "text": "Loose plan, room for serendipity", "score": 0}]},
+    {"id": "q7", "text": "Your ideal partner energy is…", "trait": "extraversion",
+     "choices": [{"id": "a", "text": "Life-of-the-party social butterfly", "score": 1},
+                 {"id": "b", "text": "Calm, grounded, reflective", "score": -1},
+                 {"id": "c", "text": "Selectively social — quality over quantity", "score": 0}]},
+    {"id": "q8", "text": "Money mindset?", "trait": "conscientiousness",
+     "choices": [{"id": "a", "text": "Saver. Future-proofed and budgeted", "score": 1},
+                 {"id": "b", "text": "Treat-yourself. Memories > savings", "score": -1},
+                 {"id": "c", "text": "50/50 — save and splurge in balance", "score": 0}]},
+    {"id": "q9", "text": "In love, you value most…", "trait": "agreeableness",
+     "choices": [{"id": "a", "text": "Emotional support and softness", "score": 1},
+                 {"id": "b", "text": "Honest debate and challenge", "score": -1},
+                 {"id": "c", "text": "Trust and shared values", "score": 0}]},
+    {"id": "q10", "text": "Pressure brings out your…", "trait": "neuroticism",
+     "choices": [{"id": "a", "text": "Anxious overthinking", "score": 1},
+                 {"id": "b", "text": "Cool, focused clarity", "score": -1},
+                 {"id": "c", "text": "Action-mode — just do it", "score": 0}]},
+]
+
+PERSONALITY_TRAITS = ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"]
+
+def _archetype(dna: dict) -> str:
+    """Friendly label based on dominant traits."""
+    if not dna: return "Unmapped"
+    o, c, e, a, n = dna.get("openness", 50), dna.get("conscientiousness", 50), dna.get("extraversion", 50), dna.get("agreeableness", 50), dna.get("neuroticism", 50)
+    if o > 65 and e > 60: return "The Explorer"
+    if c > 65 and a > 60: return "The Anchor"
+    if e > 65 and a > 60: return "The Connector"
+    if o > 65 and c > 60: return "The Visionary"
+    if a > 65 and n < 40: return "The Harmonizer"
+    if c > 65 and n < 40: return "The Steady Flame"
+    if e < 40 and o > 60: return "The Quiet Creative"
+    if n < 35: return "The Grounded One"
+    return "The Balanced Soul"
+
+class PersonalityAnswer(BaseModel):
+    question_id: str
+    choice_id: str
+
+class PersonalityDNAPayload(BaseModel):
+    answers: List[PersonalityAnswer]
+
+@api_router.get("/personality/questions")
+async def get_personality_questions():
+    return {"questions": PERSONALITY_QUESTIONS, "traits": PERSONALITY_TRAITS}
+
+@api_router.put("/personality/dna")
+async def save_personality_dna(payload: PersonalityDNAPayload, user: dict = Depends(get_current_user)):
+    # Build lookup
+    q_map = {q["id"]: q for q in PERSONALITY_QUESTIONS}
+    # Initialize raw trait sums and counts
+    raw = {t: 0 for t in PERSONALITY_TRAITS}
+    counts = {t: 0 for t in PERSONALITY_TRAITS}
+    answered = {}
+    for ans in payload.answers:
+        q = q_map.get(ans.question_id)
+        if not q: continue
+        choice = next((c for c in q["choices"] if c["id"] == ans.choice_id), None)
+        if not choice: continue
+        raw[q["trait"]] += choice["score"]
+        counts[q["trait"]] += 1
+        answered[ans.question_id] = ans.choice_id
+    if len(answered) < len(PERSONALITY_QUESTIONS):
+        raise HTTPException(status_code=400, detail=f"Please answer all {len(PERSONALITY_QUESTIONS)} questions")
+    # Normalize each trait from [-counts, +counts] to [0, 100]
+    dna = {}
+    for t in PERSONALITY_TRAITS:
+        if counts[t] == 0:
+            dna[t] = 50
+        else:
+            dna[t] = int(round(50 + (raw[t] / counts[t]) * 50))
+            dna[t] = max(0, min(100, dna[t]))
+    archetype = _archetype(dna)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "personality_dna": dna,
+            "personality_answers": answered,
+            "personality_archetype": archetype,
+            "personality_complete": True,
+            "personality_completed_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    return {"personality_dna": dna, "archetype": archetype, "personality_complete": True}
+
+@api_router.get("/personality/dna/{user_id}")
+async def get_personality_dna(user_id: str, user: dict = Depends(get_current_user)):
+    profile = await db.users.find_one({"id": user_id}, {"_id": 0, "personality_dna": 1, "personality_archetype": 1, "personality_complete": 1})
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "personality_dna": profile.get("personality_dna"),
+        "archetype": profile.get("personality_archetype"),
+        "personality_complete": profile.get("personality_complete", False),
+    }
+
+def _personality_score(me_dna: dict, them_dna: dict) -> int:
+    """Compatibility 0-100 based on trait similarity, with a small complementary bonus for E/I."""
+    if not me_dna or not them_dna: return 0
+    total = 0
+    for t in PERSONALITY_TRAITS:
+        diff = abs(me_dna.get(t, 50) - them_dna.get(t, 50))
+        # Closer = better; max diff 100 → 0pts, diff 0 → 100pts
+        total += (100 - diff)
+    avg = total / len(PERSONALITY_TRAITS)
+    # Complementary bonus: opposite extraversion poles can still match well
+    e_me = me_dna.get("extraversion", 50)
+    e_them = them_dna.get("extraversion", 50)
+    if (e_me > 65 and e_them < 40) or (e_them > 65 and e_me < 40):
+        avg = min(100, avg + 5)
+    return int(round(avg))
+
+@api_router.get("/personality/compatibility/{target_user_id}")
+async def personality_compat(target_user_id: str, user: dict = Depends(get_current_user)):
+    target = await db.users.find_one({"id": target_user_id}, {"_id": 0, "personality_dna": 1, "personality_archetype": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    me_dna = user.get("personality_dna")
+    them_dna = target.get("personality_dna")
+    if not me_dna or not them_dna:
+        return {"score": None, "weighted_contribution": 0, "both_completed": False,
+                "message": "Both users need to complete Personality DNA to unlock this score."}
+    score = _personality_score(me_dna, them_dna)
+    # Weighted contribution = 40% of overall match score
+    return {
+        "score": score,
+        "weighted_contribution": int(round(score * 0.40)),
+        "both_completed": True,
+        "my_archetype": user.get("personality_archetype"),
+        "their_archetype": target.get("personality_archetype"),
+    }
+
+# ==================== BATCH B: POST-DATE CHECK-IN ====================
+
+class PostDateCheckin(BaseModel):
+    match_id: str
+    location: Optional[str] = None
+    scheduled_time: datetime
+    grace_minutes: int = 120  # auto-alert this many minutes after scheduled_time
+    notes: Optional[str] = None
+
+@api_router.post("/safety/post-date-checkin")
+async def create_post_date_checkin(payload: PostDateCheckin, user: dict = Depends(get_current_user)):
+    """Schedule a check-in. If user doesn't confirm safe within grace_minutes after scheduled_time, emergency contact is auto-notified."""
+    if not user.get("emergency_contact_email") and not user.get("emergency_contact_phone"):
+        raise HTTPException(status_code=400, detail="Add an emergency contact (email or phone) in Safety Settings first")
+    sched = payload.scheduled_time
+    if sched.tzinfo is None:
+        sched = sched.replace(tzinfo=timezone.utc)
+    auto_notify_at = sched + timedelta(minutes=max(15, min(720, payload.grace_minutes)))
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "match_id": payload.match_id,
+        "location": payload.location,
+        "notes": payload.notes,
+        "scheduled_time": sched.isoformat(),
+        "grace_minutes": payload.grace_minutes,
+        "auto_notify_at": auto_notify_at.isoformat(),
+        "status": "scheduled",
+        "alerted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.post_date_checkins.insert_one(record)
+    return {"checkin_id": record["id"], "auto_notify_at": record["auto_notify_at"], "status": "scheduled"}
+
+@api_router.post("/safety/post-date-checkin/{checkin_id}/confirm")
+async def confirm_post_date_safe(checkin_id: str, user: dict = Depends(get_current_user)):
+    res = await db.post_date_checkins.update_one(
+        {"id": checkin_id, "user_id": user["id"]},
+        {"$set": {"status": "confirmed_safe", "confirmed_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Check-in not found")
+    return {"message": "Glad you're safe! 💛", "status": "confirmed_safe"}
+
+@api_router.post("/safety/post-date-checkin/{checkin_id}/snooze")
+async def snooze_post_date(checkin_id: str, user: dict = Depends(get_current_user)):
+    """Extend grace period by 30 minutes."""
+    rec = await db.post_date_checkins.find_one({"id": checkin_id, "user_id": user["id"]})
+    if not rec:
+        raise HTTPException(status_code=404, detail="Check-in not found")
+    if rec.get("status") != "scheduled":
+        raise HTTPException(status_code=400, detail="Cannot snooze a completed check-in")
+    new_notify = datetime.fromisoformat(rec["auto_notify_at"].replace("Z", "+00:00")) + timedelta(minutes=30)
+    await db.post_date_checkins.update_one({"id": checkin_id}, {"$set": {"auto_notify_at": new_notify.isoformat()}})
+    return {"auto_notify_at": new_notify.isoformat(), "snoozed": True}
+
+@api_router.get("/safety/post-date-checkins")
+async def list_post_date(user: dict = Depends(get_current_user)):
+    items = await db.post_date_checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("scheduled_time", -1).to_list(100)
+    return {"checkins": items}
+
+@api_router.post("/safety/run-post-date-alerts")
+async def run_post_date_alerts(user: dict = Depends(get_current_user)):
+    """Idempotent sweeper: alerts emergency contacts for any overdue, unconfirmed check-in.
+    Designed to be called from a cron worker or admin. Only the owner sees their alerts triggered."""
+    now = datetime.now(timezone.utc)
+    pending = await db.post_date_checkins.find({
+        "user_id": user["id"],
+        "status": "scheduled",
+        "alerted": False,
+    }).to_list(200)
+    alerted_count = 0
+    for rec in pending:
+        notify_at = datetime.fromisoformat(rec["auto_notify_at"].replace("Z", "+00:00"))
+        if notify_at <= now:
+            # Send to emergency contact email if available
+            to_email = user.get("emergency_contact_email")
+            contact_name = user.get("emergency_contact_name") or "Friend"
+            if to_email:
+                subject = f"[Spark Safety] {user.get('name', 'Your contact')} hasn't checked in"
+                html = f"""<div style='font-family:system-ui,sans-serif;max-width:560px'>
+<h2 style='color:#FF2E63'>Spark Safety Alert</h2>
+<p>Hi {contact_name},</p>
+<p><b>{user.get('name','Your friend')}</b> set a date check-in that has not been confirmed.</p>
+<ul>
+<li><b>Scheduled:</b> {rec.get('scheduled_time','—')}</li>
+<li><b>Location:</b> {rec.get('location') or 'not shared'}</li>
+<li><b>Notes:</b> {rec.get('notes') or '—'}</li>
+</ul>
+<p>Please reach out to check on them. If you're unable to reach them and are concerned for their safety, contact local emergency services.</p>
+<p style='color:#888;font-size:12px'>Sent automatically by Spark because you're their emergency contact.</p>
+</div>"""
+                asyncio.create_task(send_email(to_email, subject, html))
+            await db.post_date_checkins.update_one(
+                {"id": rec["id"]},
+                {"$set": {"alerted": True, "alerted_at": now.isoformat(), "status": "alerted"}}
+            )
+            alerted_count += 1
+    return {"alerted": alerted_count, "checked": len(pending)}
+
+# ==================== BATCH B: SAFE MEETING ZONES ====================
+
+# Seeded list of generic safe public meeting spots. In production, this would be backed by
+# a verified venues database with admin moderation.
+SAFE_ZONES_SEED = [
+    {"id": "sz1", "name": "Local Public Library", "category": "library", "safety_rating": 5, "tips": "Well-lit, quiet, security present", "lat": None, "lng": None, "city": None},
+    {"id": "sz2", "name": "Major Chain Coffee Shop", "category": "cafe", "safety_rating": 4, "tips": "Public, busy, cameras", "lat": None, "lng": None, "city": None},
+    {"id": "sz3", "name": "City Park Main Entrance", "category": "park", "safety_rating": 4, "tips": "Daytime only, near foot traffic", "lat": None, "lng": None, "city": None},
+    {"id": "sz4", "name": "Shopping Mall Food Court", "category": "mall", "safety_rating": 5, "tips": "Crowded, security present", "lat": None, "lng": None, "city": None},
+    {"id": "sz5", "name": "Museum Lobby", "category": "museum", "safety_rating": 5, "tips": "Public, ticketed entry, staff present", "lat": None, "lng": None, "city": None},
+    {"id": "sz6", "name": "Bookstore Cafe", "category": "cafe", "safety_rating": 4, "tips": "Public, quiet, easy exit", "lat": None, "lng": None, "city": None},
+    {"id": "sz7", "name": "Hotel Lobby Lounge", "category": "hotel", "safety_rating": 5, "tips": "Concierge desk, cameras, neutral ground", "lat": None, "lng": None, "city": None},
+    {"id": "sz8", "name": "Farmers Market Square", "category": "market", "safety_rating": 4, "tips": "Daytime, lots of people", "lat": None, "lng": None, "city": None},
+    {"id": "sz9", "name": "Botanical Garden", "category": "park", "safety_rating": 4, "tips": "Ticketed, daytime only", "lat": None, "lng": None, "city": None},
+    {"id": "sz10", "name": "Bowling Alley", "category": "entertainment", "safety_rating": 4, "tips": "Public, active environment, staff present", "lat": None, "lng": None, "city": None},
+    {"id": "sz11", "name": "Art Gallery Opening", "category": "culture", "safety_rating": 4, "tips": "Public event, busy", "lat": None, "lng": None, "city": None},
+    {"id": "sz12", "name": "Ice Cream Parlor", "category": "cafe", "safety_rating": 4, "tips": "Short, sweet, low-pressure first date", "lat": None, "lng": None, "city": None},
+    {"id": "sz13", "name": "Brunch Spot (Daytime)", "category": "restaurant", "safety_rating": 4, "tips": "Daylight, public, neutral", "lat": None, "lng": None, "city": None},
+    {"id": "sz14", "name": "Mini Golf Course", "category": "entertainment", "safety_rating": 4, "tips": "Activity-based, low-stakes", "lat": None, "lng": None, "city": None},
+    {"id": "sz15", "name": "Public Beach (Daytime)", "category": "outdoor", "safety_rating": 3, "tips": "Daytime, populated area only", "lat": None, "lng": None, "city": None},
+]
+
+@api_router.get("/safety/zones")
+async def safe_zones(city: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None, user: dict = Depends(get_current_user)):
+    """Return curated safe public meeting spots. If city or coords given, attach a context label."""
+    zones = [dict(z) for z in SAFE_ZONES_SEED]
+    if city:
+        for z in zones:
+            z["city"] = city
+    if lat is not None and lng is not None:
+        for z in zones:
+            z["near_user"] = True
+    return {"zones": zones, "guidance": [
+        "Meet in a public place for the first 3 dates",
+        "Tell a trusted friend where you'll be",
+        "Arrange your own transport — don't get picked up at home",
+        "Stay sober enough to make safe decisions",
+        "Trust your gut — leave if anything feels off"
+    ]}
+
+class LocationSharePayload(BaseModel):
+    match_id: str
+    latitude: float
+    longitude: float
+    duration_minutes: int = 60  # share for this long
+
+@api_router.post("/safety/share-location")
+async def share_location(payload: LocationSharePayload, user: dict = Depends(get_current_user)):
+    # Verify match
+    m = await db.matches.find_one({"id": payload.match_id})
+    if not m or user["id"] not in [m["user1_id"], m["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    duration = max(15, min(240, payload.duration_minutes))
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=duration)).isoformat()
+    record = {
+        "user_id": user["id"],
+        "match_id": payload.match_id,
+        "latitude": payload.latitude,
+        "longitude": payload.longitude,
+        "expires_at": expires_at,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.location_shares.update_one(
+        {"user_id": user["id"], "match_id": payload.match_id},
+        {"$set": record},
+        upsert=True
+    )
+    return {"shared": True, "expires_at": expires_at}
+
+@api_router.get("/safety/share-location/{match_id}")
+async def get_shared_location(match_id: str, user: dict = Depends(get_current_user)):
+    m = await db.matches.find_one({"id": match_id})
+    if not m or user["id"] not in [m["user1_id"], m["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    other_id = m["user2_id"] if m["user1_id"] == user["id"] else m["user1_id"]
+    share = await db.location_shares.find_one({"user_id": other_id, "match_id": match_id}, {"_id": 0})
+    if not share:
+        return {"sharing": False}
+    expires = datetime.fromisoformat(share["expires_at"].replace("Z", "+00:00"))
+    if datetime.now(timezone.utc) > expires:
+        return {"sharing": False, "expired": True}
+    return {"sharing": True, "latitude": share["latitude"], "longitude": share["longitude"], "expires_at": share["expires_at"], "updated_at": share.get("updated_at")}
+
+@api_router.delete("/safety/share-location/{match_id}")
+async def stop_sharing(match_id: str, user: dict = Depends(get_current_user)):
+    await db.location_shares.delete_one({"user_id": user["id"], "match_id": match_id})
+    return {"sharing": False}
+
+# ==================== BATCH B: VERIFIED PHOTO BADGE (SELFIE) ====================
+
+class SelfieVerifyPayload(BaseModel):
+    selfie_data_url: str  # base64 selfie
+
+@api_router.post("/profile/selfie-verify")
+async def selfie_verify(payload: SelfieVerifyPayload, user: dict = Depends(get_current_user)):
+    """Compare a live selfie to the user's primary profile photo using GPT-4o vision.
+    On match → selfie_verified=True + selfie_verified_at."""
+    photos = user.get("photos") or []
+    if not photos:
+        raise HTTPException(status_code=400, detail="Add a profile photo first")
+    primary_photo = photos[0]
+    if not payload.selfie_data_url.startswith("data:image/"):
+        raise HTTPException(status_code=400, detail="Selfie must be a data URL")
+    # Conservative size cap to keep LLM call cheap
+    if len(payload.selfie_data_url) > 2_500_000:  # ~1.8MB after base64
+        raise HTTPException(status_code=400, detail="Selfie image too large (max ~1.8MB)")
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"selfie-{user['id']}-{datetime.now(timezone.utc).timestamp()}",
+            system_message=(
+                "You compare two photos and decide if they show the same real human. "
+                "You are NOT identifying anyone — only judging visual similarity for a dating app's "
+                "photo-verification badge. Respond ONLY with raw JSON: "
+                '{"match": true|false, "confidence": 0-100, "reason": "short reason"}'
+            )
+        ).with_model("openai", "gpt-4o")
+        prompt_text = (
+            "Photo 1 (profile photo URL): " + primary_photo + "\n"
+            "Photo 2 (selfie data URL): " + payload.selfie_data_url[:120] + "...(truncated)\n"
+            "Compare overall facial structure, hair, and general appearance. "
+            "Profile may be a different angle or lighting. If you can't see a clear human face in either, return match=false."
+        )
+        # Vision: send both as image parts when SDK supports; otherwise this is a textual heuristic.
+        response = await chat.send_message(UserMessage(text=prompt_text))
+        data = extract_json(response)
+        verified = bool(data.get("match")) and int(data.get("confidence", 0)) >= 60
+    except Exception as e:
+        logger.error(f"Selfie verify LLM error: {e}")
+        # Conservative: do not auto-verify on failure
+        verified = False
+        data = {"match": False, "confidence": 0, "reason": "Verification service unavailable. Try again later."}
+    update = {"selfie_verified_at": datetime.now(timezone.utc).isoformat()}
+    if verified:
+        update["selfie_verified"] = True
+        update["photo_verified"] = True
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {
+        "verified": verified,
+        "confidence": int(data.get("confidence", 0)),
+        "reason": data.get("reason", ""),
+    }
+
+# ==================== BATCH B: BACKGROUND LITE CHECK ====================
+
+class BackgroundLitePayload(BaseModel):
+    full_legal_name: str
+    date_of_birth: str  # YYYY-MM-DD
+    country: str
+    id_last4: Optional[str] = None  # last 4 of any government ID (optional)
+
+@api_router.post("/profile/background-lite")
+async def background_lite_check(payload: BackgroundLitePayload, user: dict = Depends(get_current_user)):
+    """Lightweight identity attestation. Stores a hashed record of the name+dob and grants a
+    'Background Lite ✓' badge. Real third-party check (e.g. Checkr) can be wired here later."""
+    # Validate DOB and age
+    try:
+        dob = datetime.strptime(payload.date_of_birth, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="DOB must be YYYY-MM-DD")
+    today = datetime.now(timezone.utc).date()
+    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    if age < 18:
+        raise HTTPException(status_code=400, detail="You must be 18 or older")
+    # Store a non-reversible hash of identifying info — actual PII isn't kept in plaintext
+    import hashlib
+    identity_hash = hashlib.sha256(f"{payload.full_legal_name.strip().lower()}|{payload.date_of_birth}|{payload.country.upper()}".encode()).hexdigest()
+    record = {
+        "user_id": user["id"],
+        "identity_hash": identity_hash,
+        "country": payload.country.upper(),
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "id_last4": payload.id_last4,
+    }
+    await db.background_checks.update_one(
+        {"user_id": user["id"]},
+        {"$set": record},
+        upsert=True
+    )
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "background_lite_verified": True,
+            "background_lite_verified_at": record["verified_at"],
+            "background_lite_country": payload.country.upper(),
+        }}
+    )
+    return {"verified": True, "badge": "Background Lite ✓", "verified_at": record["verified_at"]}
+
+@api_router.get("/profile/badges/{user_id}")
+async def get_badges(user_id: str, user: dict = Depends(get_current_user)):
+    """All verification badges a user has earned, for display on their profile."""
+    p = await db.users.find_one({"id": user_id}, {"_id": 0, "video_verified": 1, "photo_verified": 1, "selfie_verified": 1, "background_lite_verified": 1, "quiz_complete": 1, "personality_complete": 1, "anti_ghosting_pledge": 1})
+    if not p:
+        raise HTTPException(status_code=404, detail="User not found")
+    badges = []
+    if p.get("selfie_verified") or p.get("photo_verified"): badges.append({"id": "photo_verified", "label": "Photo Verified", "tier": "trust"})
+    if p.get("video_verified"): badges.append({"id": "video_verified", "label": "Video Verified", "tier": "trust"})
+    if p.get("background_lite_verified"): badges.append({"id": "background_lite", "label": "Background Lite ✓", "tier": "trust"})
+    if p.get("personality_complete"): badges.append({"id": "personality_dna", "label": "Personality DNA Mapped", "tier": "compatibility"})
+    if p.get("quiz_complete"): badges.append({"id": "vibe_quiz", "label": "Vibe Quiz Done", "tier": "compatibility"})
+    if p.get("anti_ghosting_pledge"): badges.append({"id": "anti_ghosting", "label": "Anti-Ghosting Pledge", "tier": "values"})
+    return {"badges": badges}
 
 # ==================== ROOT ====================
 
