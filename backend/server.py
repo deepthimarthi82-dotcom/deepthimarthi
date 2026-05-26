@@ -9,7 +9,7 @@ import json
 import logging
 import asyncio
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, constr
 from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -352,8 +352,21 @@ def haversine_distance(lat1, lon1, lat2, lon2, unit="mi"):
     return round(2 * R * math.asin(math.sqrt(a)), 1)
 
 async def geocode_city(city: str, country: Optional[str] = None):
-    """Geocode a city name to (lat, lng) using Nominatim. Returns (None, None) on failure."""
+    """Geocode a city name to (lat, lng) using Nominatim. Cached in MongoDB to avoid hammering the free tier (1 req/sec limit). Returns (None, None) on failure."""
     q = f"{city}, {country}" if country else city
+    cache_key = q.strip().lower()
+    # Check cache (good for 90 days)
+    try:
+        cached = await db.geocode_cache.find_one({"key": cache_key})
+        if cached:
+            ts = cached.get("cached_at")
+            if ts:
+                cached_at = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if cached_at.tzinfo is None: cached_at = cached_at.replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - cached_at).days < 90:
+                    return cached.get("lat"), cached.get("lng")
+    except Exception:
+        pass
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             r = await client.get(
@@ -363,7 +376,17 @@ async def geocode_city(city: str, country: Optional[str] = None):
             )
             data = r.json()
             if data:
-                return float(data[0]["lat"]), float(data[0]["lon"])
+                lat, lng = float(data[0]["lat"]), float(data[0]["lon"])
+                # Cache positive result
+                try:
+                    await db.geocode_cache.update_one(
+                        {"key": cache_key},
+                        {"$set": {"key": cache_key, "query": q, "lat": lat, "lng": lng, "cached_at": datetime.now(timezone.utc).isoformat()}},
+                        upsert=True
+                    )
+                except Exception:
+                    pass
+                return lat, lng
     except Exception as e:
         logger.warning(f"Geocoding failed for '{q}': {e}")
     return None, None
@@ -2317,8 +2340,8 @@ async def clear_my_filters(user: dict = Depends(get_current_user)):
 # ==================== LOCATION (CITY SELECTOR) ====================
 
 class LocationUpdatePayload(BaseModel):
-    city: str
-    country: Optional[str] = None
+    city: constr(max_length=120)
+    country: Optional[constr(max_length=80)] = None
 
 @api_router.put("/me/location")
 async def update_my_location(payload: LocationUpdatePayload, user: dict = Depends(get_current_user)):
@@ -2329,10 +2352,18 @@ async def update_my_location(payload: LocationUpdatePayload, user: dict = Depend
     country = (payload.country or "").strip() or None
     lat, lng = await geocode_city(city, country)
     update = {"location": city, "country": country, "updated_at": datetime.now(timezone.utc).isoformat()}
+    unset = {}
     if lat is not None:
         update["latitude"] = lat
         update["longitude"] = lng
-    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    else:
+        # Clear stale lat/lng so distance calculations don't silently use the wrong coords
+        unset["latitude"] = ""
+        unset["longitude"] = ""
+    ops = {"$set": update}
+    if unset:
+        ops["$unset"] = unset
+    await db.users.update_one({"id": user["id"]}, ops)
     return {"location": city, "country": country, "latitude": lat, "longitude": lng, "geocoded": lat is not None}
 
 

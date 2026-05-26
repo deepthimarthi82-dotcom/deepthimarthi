@@ -87,6 +87,14 @@ Build a modern swipe-based serious dating/matrimony app like Tinder but better f
 - Frontend `/filters` page with sticky save/clear bar + premium gate
 - 17/17 backend + 100% frontend pass (iter 11)
 
+### Phase 10 — Production Hotfixes (Feb 2026) ✅
+- **Filter clamps tightened** — age 18-99 (was 18-120), height 140-220cm (was 120-230cm), distance 1-500. Edge-case clamps both ends (min/max).
+- **Swipe counter ∞** — `swipes-remaining` and `super-likes-remaining` testids render "∞" instead of "999999" for VIP/admin
+- **Top-bar city selector** — Bumble-style: header shows current city (or "Set city") opens a Neo-Brutalist modal. New endpoint `PUT /api/me/location` with Nominatim geocoding. Bogus city clears stale lat/lng.
+- **Nominatim caching** — `db.geocode_cache` 90-day cache. First call ~700ms, cached ~200ms. Saves OSM free-tier quota.
+- **Desktop responsive** — AppLayout: `max-w-lg lg:max-w-6xl`, desktop top nav (`hidden lg:flex`), mobile bottom nav (`lg:hidden`). Discover card image `h-[400px] lg:h-[560px]`.
+- 20/20 backend + 100% frontend pass (iter 12)
+
 ## Prioritized Backlog
 
 ### P0
