@@ -1435,6 +1435,10 @@ const DiscoverPage = () => {
   const [lastSwipe, setLastSwipe] = useState(null);
   const [boost, setBoost] = useState({ is_active: false, active_until: null, boosts_remaining_this_week: 0 });
   const [boostSecondsLeft, setBoostSecondsLeft] = useState(0);
+  const [todaysSpark, setTodaysSpark] = useState(null);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const [whyReasons, setWhyReasons] = useState([]);
+  const [wellnessSnack, setWellnessSnack] = useState(null);
   const { token, user } = useAuth();
   const navigate = useNavigate();
 
@@ -1460,7 +1464,26 @@ const DiscoverPage = () => {
   useEffect(() => {
     fetchProfiles();
     fetchBoostStatus();
-  }, [fetchProfiles, fetchBoostStatus]);
+    apiCall("get", "/discover/todays-spark", null, token).then(r => setTodaysSpark(r.pick ? r : null)).catch(() => {});
+  }, [fetchProfiles, fetchBoostStatus, token]);
+
+  // Wellness gating — show prompts at 20 swipes and lock at 30
+  const swipesUsed = Math.max(0, 30 - (swipesRemaining || 0));
+  useEffect(() => {
+    if (user?.subscription === "free") {
+      if (swipesUsed === 20) setWellnessSnack("Quality over quantity — take your time! 💛");
+      else if (swipesUsed >= 30) setWellnessSnack("You've reached your daily limit. Come back tomorrow with fresh eyes! 💛");
+      else if (wellnessSnack) setWellnessSnack(null);
+    }
+  }, [swipesUsed, user?.subscription, wellnessSnack]);
+
+  const showWhy = async (targetId) => {
+    setWhyOpen(true);
+    try {
+      const r = await apiCall("get", `/discover/why/${targetId}`, null, token);
+      setWhyReasons(r.reasons || []);
+    } catch { setWhyReasons(["We're computing this..."]); }
+  };
 
   // Auto-record profile view when a card is displayed
   useEffect(() => {
@@ -1589,6 +1612,32 @@ const DiscoverPage = () => {
           </div>
         </div>
 
+        {/* Today's Spark banner */}
+        {todaysSpark?.pick && (
+          <button
+            onClick={() => showWhy(todaysSpark.pick.id)}
+            className="w-full mb-4 card-brutal p-3 bg-gradient-to-r from-[#FFD400] to-[#FF2E63] text-white flex items-center gap-3 text-left"
+            data-testid="todays-spark-banner"
+          >
+            <img src={todaysSpark.pick.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=80"} className="w-12 h-12 rounded-full border-2 border-black object-cover" alt=""/>
+            <div className="flex-1">
+              <p className="font-bold text-xs uppercase tracking-wider">⚡ Today's Spark</p>
+              <p className="font-bold">{todaysSpark.pick.name}, {todaysSpark.pick.age}</p>
+              <p className="text-[10px] opacity-90">Tap to see why we picked them</p>
+            </div>
+            <ChevronRight className="w-5 h-5"/>
+          </button>
+        )}
+
+        {/* Wellness Snack */}
+        {wellnessSnack && (
+          <div className="mb-4 card-brutal p-3 bg-[#FFF4E6] text-sm font-bold flex items-center gap-2" data-testid="wellness-snack">
+            <Heart className="w-4 h-4 text-[#FF2E63]"/>
+            <span className="flex-1">{wellnessSnack}</span>
+            {swipesUsed >= 30 && <button onClick={() => navigate("/wellness")} className="text-[10px] underline font-bold">Wellness Mode</button>}
+          </div>
+        )}
+
         {/* Swipe Card */}
         {currentProfile ? (
           <div className="relative">
@@ -1642,6 +1691,13 @@ const DiscoverPage = () => {
                       <span className="text-[#CCFF00] font-bold">{currentProfile.compatibility_score}% Vibe Match</span>
                     </div>
                   )}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); showWhy(currentProfile.id); }}
+                    className="mt-2 text-[10px] underline opacity-90 font-bold"
+                    data-testid="why-this-match-btn"
+                  >
+                    Why this match? →
+                  </button>
                 </div>
               </div>
 
@@ -1757,6 +1813,24 @@ const DiscoverPage = () => {
                   Keep Swiping
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Why this match? Modal */}
+        {whyOpen && (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" data-testid="why-modal">
+            <div className="card-brutal max-w-sm w-full p-5">
+              <div className="flex justify-between items-start mb-3">
+                <h3 className="text-xl font-bold" style={{ fontFamily: 'Syne' }}>Why we picked this match</h3>
+                <button onClick={() => setWhyOpen(false)} data-testid="close-why-btn"><X className="w-5 h-5"/></button>
+              </div>
+              <ul className="space-y-2 text-sm">
+                {whyReasons.map((r, i) => (
+                  <li key={i} className="flex items-start gap-2"><Sparkles className="w-4 h-4 text-[#FF2E63] mt-0.5 flex-shrink-0"/><span>{r}</span></li>
+                ))}
+              </ul>
+              <p className="text-[10px] text-gray-400 mt-3 text-center">No tricks. No throttling. <button onClick={() => { setWhyOpen(false); navigate("/transparency-algorithm"); }} className="underline font-bold">See full algorithm</button></p>
             </div>
           </div>
         )}
@@ -1995,6 +2069,10 @@ const ChatPage = () => {
   const [recap, setRecap] = useState(null);
   const [showRecap, setShowRecap] = useState(false);
   const [recapLoading, setRecapLoading] = useState(false);
+  const [health, setHealth] = useState(null);
+  const [anniversary, setAnniversary] = useState(null);
+  const [reigniteTopics, setReigniteTopics] = useState([]);
+  const [showReignite, setShowReignite] = useState(false);
   const wsRef = React.useRef(null);
   const mediaRecorderRef = React.useRef(null);
   const recordChunksRef = React.useRef([]);
@@ -2029,6 +2107,9 @@ const ChatPage = () => {
   // WebSocket for real-time messages, typing, presence
   useEffect(() => {
     if (!token || !matchIdFromUrl) return;
+    // Fetch health + anniversary in parallel
+    apiCall("get", `/chat/${matchIdFromUrl}/health`, null, token).then(setHealth).catch(() => {});
+    apiCall("get", `/match/${matchIdFromUrl}/anniversary`, null, token).then(setAnniversary).catch(() => {});
     const wsBase = BACKEND_URL.replace(/^http/, "ws");
     const ws = new WebSocket(`${wsBase}/api/ws/chat/${matchIdFromUrl}?token=${encodeURIComponent(token)}`);
     wsRef.current = ws;
@@ -2101,6 +2182,14 @@ const ChatPage = () => {
       setShowRecap(false);
     }
     setRecapLoading(false);
+  };
+
+  const reignite = async () => {
+    setShowReignite(true);
+    try {
+      const r = await apiCall("post", `/chat/${matchIdFromUrl}/reignite`, null, token);
+      setReigniteTopics(r.topics || []);
+    } catch { toast.error("Couldn't reignite"); }
   };
 
   const refreshRecap = async () => {
@@ -2192,7 +2281,16 @@ const ChatPage = () => {
             className="w-10 h-10 rounded-full object-cover border-2 border-black"
           />
           <div className="flex-1">
-            <h2 className="font-bold">{match?.user?.name}</h2>
+            <h2 className="font-bold flex items-center gap-2">
+              {match?.user?.name}
+              {health && (
+                <span 
+                  className={`w-2 h-2 rounded-full ${health.color === 'green' ? 'bg-[#00CC66]' : health.color === 'yellow' ? 'bg-[#FFD400]' : 'bg-[#FF0000]'}`}
+                  title={health.hint}
+                  data-testid="health-indicator"
+                />
+              )}
+            </h2>
             <p className="text-xs text-gray-500 flex items-center gap-1" data-testid="presence-indicator">
               <span className={`w-2 h-2 rounded-full ${peerOnline ? 'bg-[#00CC66]' : 'bg-gray-300'}`} />
               {peerOnline ? 'Online now' : 'Offline'}
@@ -2218,6 +2316,19 @@ const ChatPage = () => {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {/* Anniversary banner */}
+        {anniversary?.milestone && (
+          <div className="card-brutal p-3 bg-[#FFD400] text-center text-sm font-bold" data-testid="anniversary-banner">
+            {anniversary.milestone.message}
+          </div>
+        )}
+        {/* Reignite banner when health is red */}
+        {health?.color === "red" && (
+          <div className="card-brutal p-3 bg-[#FFE5E5]" data-testid="reignite-banner">
+            <p className="text-sm font-bold mb-2">{health.hint}</p>
+            <button onClick={reignite} className="btn-primary w-full" data-testid="reignite-btn">⚡ Reignite the Spark</button>
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="text-center py-12">
             <Sparkles className="w-12 h-12 text-[#CCFF00] mx-auto mb-4" />
@@ -2348,6 +2459,28 @@ const ChatPage = () => {
         )}
         <CopyrightFooter className="!py-1 !text-[10px]" />
       </div>
+      {/* Reignite Topics Modal */}
+      {showReignite && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" data-testid="reignite-modal">
+          <div className="card-brutal max-w-sm w-full p-5">
+            <div className="flex justify-between items-start mb-3">
+              <h3 className="text-xl font-bold" style={{ fontFamily: 'Syne' }}>⚡ Fresh Topics</h3>
+              <button onClick={() => setShowReignite(false)}><X className="w-5 h-5"/></button>
+            </div>
+            <p className="text-sm text-gray-600 mb-3">Tap one to send to your match.</p>
+            <div className="space-y-2">
+              {reigniteTopics.map((t, i) => (
+                <button key={i} onClick={() => { setNewMessage(t); setShowReignite(false); }}
+                  className="w-full text-left p-3 bg-[#CCFF00] border-2 border-black rounded-lg text-sm font-bold hover:bg-[#b8e600]"
+                  data-testid={`reignite-topic-${i}`}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Date Vault Modal */}
       {showRecap && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4" data-testid="recap-modal">
@@ -2475,12 +2608,35 @@ const ChatPage = () => {
 
 // ==================== PROFILE PAGE ====================
 const ProfilePage = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, token } = useAuth();
   const navigate = useNavigate();
+  const [completeness, setCompleteness] = useState({ percent: 0, missing: [] });
+
+  useEffect(() => {
+    if (token) apiCall("get", "/me/completeness", null, token).then(setCompleteness).catch(() => {});
+  }, [token]);
 
   return (
     <AppLayout>
       <div data-testid="profile-page">
+        {/* Profile Completeness Bar */}
+        {completeness.percent < 100 && (
+          <div className="card-brutal p-4 mb-6 bg-[#FFF4E6]" data-testid="completeness-bar">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-sm font-bold">Your profile is {completeness.percent}% complete</span>
+              {completeness.percent < 80 && <span className="text-xs text-[#FF2E63] font-bold">3x more matches!</span>}
+            </div>
+            <div className="w-full h-3 bg-white border-2 border-black rounded-full overflow-hidden">
+              <div className="h-full bg-[#FF2E63] transition-all" style={{ width: `${completeness.percent}%` }} />
+            </div>
+            {completeness.missing?.length > 0 && (
+              <button onClick={() => navigate("/extras")} className="mt-2 text-xs font-bold text-[#FF2E63] hover:underline" data-testid="complete-profile-link">
+                Add: {completeness.missing.slice(0, 2).join(", ")} →
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="card-brutal overflow-hidden mb-6">
           <img 
             src={user?.photos?.[0] || "https://images.unsplash.com/photo-1581977325979-80749e97b0c7?w=400"} 
@@ -2488,12 +2644,17 @@ const ProfilePage = () => {
             className="w-full h-64 object-cover"
           />
           <div className="p-6">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
               <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>{user?.name}, {user?.age}</h2>
               {user?.video_verified && (
                 <div className="bg-[#00CC66] rounded-full p-1">
                   <Check className="w-4 h-4 text-white" />
                 </div>
+              )}
+              {user?.anti_ghosting_pledge && (
+                <span className="px-2 py-0.5 bg-[#FFD400] border-2 border-black text-xs font-bold rounded-full" data-testid="pledge-badge">
+                  🤝 No-Ghost
+                </span>
               )}
             </div>
             {user?.job_title && <p className="text-gray-600">{user?.job_title}</p>}
@@ -2834,6 +2995,51 @@ const SettingsPage = () => {
               <p className="text-sm text-gray-600">
                 {settings.subscription === "free" ? "Free Plan" : `${settings.subscription?.toUpperCase()} until ${new Date(settings.subscription_expires).toLocaleDateString()}`}
               </p>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/extras")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-extras-link"
+          >
+            <div className="flex items-center gap-3">
+              <Sparkles className="w-5 h-5 text-[#FF2E63]" />
+              <div>
+                <h3 className="font-bold">Profile Extras</h3>
+                <p className="text-sm text-gray-600">Growth goals, icebreakers, anti-ghosting pledge</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/wellness")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-wellness-link"
+          >
+            <div className="flex items-center gap-3">
+              <Heart className="w-5 h-5 text-[#FF2E63]" />
+              <div>
+                <h3 className="font-bold">Wellness Mode</h3>
+                <p className="text-sm text-gray-600">Daily check-in, take a break</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          <button 
+            onClick={() => navigate("/promise")}
+            className="w-full card-feature flex items-center justify-between"
+            data-testid="settings-promise-link"
+          >
+            <div className="flex items-center gap-3">
+              <Check className="w-5 h-5 text-[#00CC66]" />
+              <div>
+                <h3 className="font-bold">Our Promise</h3>
+                <p className="text-sm text-gray-600">Algorithm transparency, fair matching</p>
+              </div>
             </div>
             <ChevronRight className="w-5 h-5" />
           </button>
@@ -3224,6 +3430,299 @@ const BugReportPage = () => {
   );
 };
 
+// ==================== OUR PROMISE + ALGORITHM TRANSPARENCY ====================
+const PromisePage = () => {
+  const navigate = useNavigate();
+  return (
+    <AppLayout>
+      <div data-testid="promise-page" className="space-y-4">
+        <h2 className="text-3xl font-bold" style={{ fontFamily: 'Syne' }}>Our Promise</h2>
+        <div className="card-brutal p-6 bg-[#CCFF00]">
+          <p className="font-bold text-lg leading-relaxed">
+            At Spark, we never hide your profile or manipulate your matches.
+            Every user gets equal, fair visibility. Premium is for extra tools,
+            not for being seen.
+          </p>
+        </div>
+        <div className="space-y-3">
+          <h3 className="text-xl font-bold" style={{ fontFamily: 'Syne' }}>What we don't do</h3>
+          <ul className="space-y-2 text-sm">
+            <li className="card-brutal p-3 flex items-start gap-2"><X className="w-4 h-4 text-[#FF0000] mt-1"/>Throttle free users to push them to premium</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><X className="w-4 h-4 text-[#FF0000] mt-1"/>Use bots to fake activity</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><X className="w-4 h-4 text-[#FF0000] mt-1"/>Hide attractive profiles from new users</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><X className="w-4 h-4 text-[#FF0000] mt-1"/>Reset your matches when you don't pay</li>
+          </ul>
+          <h3 className="text-xl font-bold pt-3" style={{ fontFamily: 'Syne' }}>What we do</h3>
+          <ul className="space-y-2 text-sm">
+            <li className="card-brutal p-3 flex items-start gap-2"><Check className="w-4 h-4 text-[#00CC66] mt-1"/>Rank by shared values, growth goals, and intentions</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><Check className="w-4 h-4 text-[#00CC66] mt-1"/>Reward complete, honest profiles</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><Check className="w-4 h-4 text-[#00CC66] mt-1"/>Show "Why this match?" on every profile</li>
+            <li className="card-brutal p-3 flex items-start gap-2"><Check className="w-4 h-4 text-[#00CC66] mt-1"/>Encrypt your data at rest, never sell it</li>
+          </ul>
+          <button onClick={() => navigate("/transparency-algorithm")} className="btn-secondary w-full mt-3" data-testid="see-algorithm-btn">
+            See exactly how our algorithm works →
+          </button>
+        </div>
+      </div>
+    </AppLayout>
+  );
+};
+
+const AlgorithmTransparencyPage = () => {
+  const { token } = useAuth();
+  const [completeness, setCompleteness] = useState({ percent: 0, missing: [] });
+  useEffect(() => {
+    apiCall("get", "/me/completeness", null, token).then(setCompleteness).catch(() => {});
+  }, [token]);
+  return (
+    <AppLayout>
+      <div data-testid="algorithm-page" className="space-y-4">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Algorithm Transparency</h2>
+        <p className="text-gray-600 text-sm">Exactly how we rank profiles in your discover feed.</p>
+
+        <div className="card-brutal p-5 space-y-2">
+          <h3 className="font-bold">Match Score Breakdown</h3>
+          {[
+            ["Shared growth goals (3+)", "Up to +45"],
+            ["Same dating intention", "+20"],
+            ["Shared interests (each)", "+10"],
+            ["Shared languages (each)", "+5"],
+            ["Photo or video verified", "+10"],
+            ["Anti-Ghosting Pledge signed", "+5"],
+          ].map(([k, v]) => (
+            <div key={k} className="flex justify-between text-sm border-b border-dashed py-1"><span>{k}</span><span className="font-bold text-[#FF2E63]">{v}</span></div>
+          ))}
+        </div>
+
+        <div className="card-brutal p-5 bg-[#CCFF00]">
+          <h3 className="font-bold mb-1">Your Match Potential</h3>
+          <p className="text-sm mb-3">Improve your visibility organically — no boost required.</p>
+          <div className="w-full h-3 bg-white border-2 border-black rounded-full overflow-hidden">
+            <div className="h-full bg-[#FF2E63]" style={{ width: `${completeness.percent}%` }} />
+          </div>
+          <p className="text-xs font-bold mt-1">{completeness.percent}% — {completeness.percent < 50 ? "Lots of room to grow!" : completeness.percent < 80 ? "Looking good." : "Top-tier profile! 🔥"}</p>
+        </div>
+
+        {completeness.missing?.length > 0 && (
+          <div className="card-brutal p-5">
+            <h3 className="font-bold mb-2">Quick wins</h3>
+            <ul className="space-y-1 text-sm">
+              {completeness.missing.map((m) => (
+                <li key={m} className="flex items-center gap-2"><Sparkles className="w-3 h-3 text-[#FF2E63]"/>Add your <b>{m.replace(/_/g, ' ')}</b></li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </AppLayout>
+  );
+};
+
+// ==================== PROFILE EXTRAS (Growth Goals + Icebreakers + Pledge) ====================
+const ProfileExtrasPage = () => {
+  const { token } = useAuth();
+  const [opts, setOpts] = useState({ growth_goal_options: [], icebreaker_questions: [] });
+  const [goals, setGoals] = useState([]);
+  const [icebreakers, setIcebreakers] = useState([]);
+  const [pledge, setPledge] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      apiCall("get", "/options/profile-fields"),
+      apiCall("get", "/auth/me", null, token),
+    ]).then(([o, me]) => {
+      setOpts(o);
+      setGoals(me.growth_goals || []);
+      setIcebreakers(me.icebreaker_answers?.length ? me.icebreaker_answers : []);
+      setPledge(!!me.anti_ghosting_pledge);
+    }).finally(() => setLoading(false));
+  }, [token]);
+
+  const toggleGoal = (g) => {
+    if (goals.includes(g)) setGoals(goals.filter((x) => x !== g));
+    else if (goals.length < 5) setGoals([...goals, g]);
+    else toast.error("Max 5 growth goals");
+  };
+  const saveGoals = async () => {
+    try {
+      await apiCall("put", "/me/growth-goals", { goals }, token);
+      toast.success("Growth goals saved");
+    } catch { toast.error("Failed"); }
+  };
+
+  const setIce = (i, field, value) => {
+    const next = [...icebreakers];
+    next[i] = { ...next[i], [field]: value };
+    setIcebreakers(next);
+  };
+  const saveIcebreakers = async () => {
+    try {
+      await apiCall("put", "/me/icebreakers", { answers: icebreakers.filter(a => a?.question && a?.answer) }, token);
+      toast.success("Icebreakers saved");
+    } catch { toast.error("Failed"); }
+  };
+
+  const togglePledge = async () => {
+    try {
+      const res = await apiCall("put", "/me/pledge", { enabled: !pledge }, token);
+      setPledge(res.anti_ghosting_pledge);
+      toast.success(res.anti_ghosting_pledge ? "Pledge signed 🤝" : "Pledge removed");
+    } catch { toast.error("Failed"); }
+  };
+
+  if (loading) return <AppLayout><div className="text-center py-10">Loading...</div></AppLayout>;
+
+  return (
+    <AppLayout>
+      <div data-testid="extras-page" className="space-y-6">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Make Your Profile Shine</h2>
+
+        {/* Pledge */}
+        <div className="card-brutal p-5 bg-[#FFF4E6]">
+          <h3 className="font-bold flex items-center gap-2">🤝 Anti-Ghosting Pledge</h3>
+          <p className="text-sm text-gray-700 my-2">Promise to reply (even a polite "not feeling it") within 7 days. Get a special badge on your profile.</p>
+          <button onClick={togglePledge} className={`w-full p-3 border-2 border-black font-bold rounded-lg ${pledge ? 'bg-[#00CC66] text-white' : 'bg-white'}`} data-testid="pledge-btn">
+            {pledge ? "✓ Pledge Signed" : "Sign the Pledge"}
+          </button>
+        </div>
+
+        {/* Growth Goals */}
+        <div className="card-brutal p-5">
+          <h3 className="font-bold">Growth Goals (pick up to 5)</h3>
+          <p className="text-xs text-gray-600 mb-3">What you want to achieve in the next 2 years. 3+ shared goals = match boost.</p>
+          <div className="flex flex-wrap gap-2">
+            {opts.growth_goal_options.map((g) => (
+              <button key={g} onClick={() => toggleGoal(g)}
+                className={`px-3 py-1.5 text-xs font-bold border-2 border-black rounded-full ${goals.includes(g) ? 'bg-[#FF2E63] text-white' : 'bg-white'}`}
+                data-testid={`goal-${g}`}>
+                {g}
+              </button>
+            ))}
+          </div>
+          <button onClick={saveGoals} className="btn-secondary w-full mt-3" data-testid="save-goals-btn">Save Goals ({goals.length}/5)</button>
+        </div>
+
+        {/* Icebreakers */}
+        <div className="card-brutal p-5">
+          <h3 className="font-bold">Icebreakers (3 questions)</h3>
+          <p className="text-xs text-gray-600 mb-3">Answer 3 fun questions matches can react to.</p>
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="mb-3">
+              <select className="input-brutal mb-1" value={icebreakers[i]?.question || ""} onChange={(e) => setIce(i, "question", e.target.value)} data-testid={`ice-q-${i}`}>
+                <option value="">Pick a question...</option>
+                {opts.icebreaker_questions.map((q) => <option key={q}>{q}</option>)}
+              </select>
+              <input className="input-brutal" placeholder="Your answer..." value={icebreakers[i]?.answer || ""} onChange={(e) => setIce(i, "answer", e.target.value)} data-testid={`ice-a-${i}`} />
+            </div>
+          ))}
+          <button onClick={saveIcebreakers} className="btn-secondary w-full" data-testid="save-icebreakers-btn">Save Icebreakers</button>
+        </div>
+      </div>
+    </AppLayout>
+  );
+};
+
+// ==================== WELLNESS PAGE ====================
+const WellnessPage = () => {
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [status, setStatus] = useState({});
+  const [breakDays, setBreakDays] = useState(3);
+  const [supportMsg, setSupportMsg] = useState(null);
+
+  useEffect(() => {
+    apiCall("get", "/wellness/status", null, token).then(setStatus).catch(() => {});
+  }, [token]);
+
+  const submitMood = async (mood) => {
+    try {
+      const res = await apiCall("post", "/wellness/checkin", { mood }, token);
+      toast.success("Mood logged 💛");
+      if (res.show_support) setSupportMsg(res.support_message);
+      setStatus({ ...status, today_checkin: { mood } });
+    } catch { toast.error("Failed"); }
+  };
+
+  const startBreak = async () => {
+    try {
+      const res = await apiCall("post", "/wellness/take-break", { days: breakDays }, token);
+      toast.success(res.message);
+      setStatus({ ...status, is_paused: true, paused_until: res.paused_until });
+    } catch { toast.error("Failed"); }
+  };
+
+  const resume = async () => {
+    try {
+      await apiCall("post", "/wellness/resume", null, token);
+      toast.success("Welcome back!");
+      setStatus({ ...status, is_paused: false, paused_until: null });
+    } catch { toast.error("Failed"); }
+  };
+
+  const moods = [
+    { emoji: "😄", label: "great", desc: "Great" },
+    { emoji: "🙂", label: "good", desc: "Good" },
+    { emoji: "😐", label: "okay", desc: "Okay" },
+    { emoji: "😔", label: "down", desc: "Down" },
+    { emoji: "😤", label: "frustrated", desc: "Frustrated" },
+  ];
+
+  return (
+    <AppLayout>
+      <div data-testid="wellness-page" className="space-y-5">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'Syne' }}>Wellness Mode 💛</h2>
+        <p className="text-gray-600 text-sm">Healthy dating = healthier outcomes.</p>
+
+        {/* Daily Check-in */}
+        <div className="card-brutal p-5">
+          <h3 className="font-bold mb-2">How are you feeling about dating today?</h3>
+          {status.today_checkin ? (
+            <p className="text-sm text-gray-600">Logged today: <b>{status.today_checkin.mood}</b></p>
+          ) : (
+            <div className="grid grid-cols-5 gap-2">
+              {moods.map((m) => (
+                <button key={m.label} onClick={() => submitMood(m.label)}
+                  className="card-brutal p-2 hover:bg-[#CCFF00]" data-testid={`mood-${m.label}`}>
+                  <div className="text-3xl">{m.emoji}</div>
+                  <div className="text-[10px] font-bold uppercase">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+          )}
+          {supportMsg && (
+            <div className="mt-3 p-3 bg-[#FFE5E5] border-2 border-black rounded-lg text-sm" data-testid="support-message">
+              {supportMsg}
+            </div>
+          )}
+        </div>
+
+        {/* Take a Break */}
+        <div className="card-brutal p-5">
+          <h3 className="font-bold mb-2">Take a Break</h3>
+          {status.is_paused ? (
+            <>
+              <p className="text-sm text-gray-700 mb-2">Account paused until <b>{status.paused_until?.slice(0, 10)}</b>. Your matches are preserved.</p>
+              <button onClick={resume} className="btn-primary w-full" data-testid="resume-btn">Resume Now</button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-gray-700 mb-3">Pause your account for 1-7 days. No new swipes, no notifications, matches saved.</p>
+              <input type="range" min="1" max="7" value={breakDays} onChange={(e) => setBreakDays(+e.target.value)} className="w-full" data-testid="break-days-slider"/>
+              <p className="text-center font-bold mb-3">{breakDays} day{breakDays > 1 && "s"}</p>
+              <button onClick={startBreak} className="btn-secondary w-full" data-testid="take-break-btn">Start Break</button>
+            </>
+          )}
+        </div>
+
+        <button onClick={() => navigate("/promise")} className="btn-ghost w-full text-sm" data-testid="see-promise-btn">
+          Read our promise to you →
+        </button>
+      </div>
+    </AppLayout>
+  );
+};
+
 // ==================== PRIVACY & SECURITY ====================
 const SecurityPage = () => {
   const { token, user, logout } = useAuth();
@@ -3558,6 +4057,10 @@ function App() {
             <Route path="/viewers" element={<ProtectedRoute><ViewersPage /></ProtectedRoute>}/>
             <Route path="/security" element={<ProtectedRoute><SecurityPage /></ProtectedRoute>}/>
             <Route path="/admin/security" element={<ProtectedRoute><AdminSecurityPage /></ProtectedRoute>}/>
+            <Route path="/extras" element={<ProtectedRoute><ProfileExtrasPage /></ProtectedRoute>}/>
+            <Route path="/wellness" element={<ProtectedRoute><WellnessPage /></ProtectedRoute>}/>
+            <Route path="/promise" element={<ProtectedRoute><PromisePage /></ProtectedRoute>}/>
+            <Route path="/transparency-algorithm" element={<ProtectedRoute><AlgorithmTransparencyPage /></ProtectedRoute>}/>
             <Route path="/safety" element={<ProtectedRoute><SafetyPage /></ProtectedRoute>} />
             <Route path="/help" element={<ProtectedRoute><HelpPage /></ProtectedRoute>} />
             <Route path="/faq" element={<ProtectedRoute><FaqPage /></ProtectedRoute>} />

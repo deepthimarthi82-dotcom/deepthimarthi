@@ -1,0 +1,70 @@
+{
+  "summary": "Iteration 6 (Batch A) backend tests — 26/26 PASSED in /app/backend/tests/test_iteration6.py. Validated all 12 new endpoints: profile completeness (8 checks, % math, increments on interests added), /options/profile-fields no-auth (12 goals + 20 questions), growth-goals (max 5 truncation, persistence), icebreakers (max 3 + empty-answer filter), pledge toggle on/off (pledge_signed_at set on enable), wellness checkin (invalid 400, 3-consecutive-down streak triggers show_support+support_message), wellness/status (wellness_prompt_at=20, daily_limit=30), take-break (paused_until +3d, demo2 excluded from demo1 discover) → resume (unset), transparency shape + badges + 0–110 score, /discover/todays-spark cached daily (2 calls = same pick.id + date + match_reasons), /discover/why returns 1–5 reason strings, chat/health green when 4 msgs <1h + red when forced to 60h, /chat/reignite returns exactly 3 topics (fallback if LLM fails — also works), /match/{id}/anniversary tier=week/month/legend at 7/30/90 days + null for 12 days. Regression: login, /discover, /matches, AI date planner returns 402 premium_required for free user demo1, VIP admin /auth/me works. FREE_DAILY_SWIPES=30 confirmed via /discover swipes_remaining and db.users.daily_swipes_remaining.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/me/icebreakers", "issue": "Server applies `[:3]` BEFORE filtering empty answers, so submitting 5 answers where index 1 is empty results in only 2 saved (q1,q3) instead of 3 valid ones (q1,q3,q4). Fix: filter empties first, then truncate to 3. Spec said 'Empty-answer entries are filtered out' AND 'max 3 of 20' — current implementation silently drops valid answers if any earlier slot was empty."},
+      {"endpoint": "GET /api/wellness/status", "issue": "today_checkin query uses `{'$gte': today_date_str}` where today is YYYY-MM-DD but created_at is full ISO datetime — relies on lexical sort. Works today, but if anyone seeds a record with non-ISO created_at this silently misses. Use `today_start_iso = datetime.combine(today, time.min, tzinfo=utc).isoformat()`."},
+      {"endpoint": "GET /api/discover/todays-spark", "issue": "match_reasons is only returned on the FIRST computation; subsequent (cached) calls return {pick, date} only — no match_reasons. Test request implied 'when first computed' is fine, but UI consumers may break expecting it always. Recompute or persist match_reasons alongside cached pick."},
+      {"endpoint": "GET /api/chat/{match_id}/health", "issue": "Hardcoded thresholds (<12h+>=4msgs=green, <48h=yellow, else red). No yellow path when count<4 but recent — newly-engaged matches with 1-3 msgs in the last hour are correctly bucketed as yellow ('slowing') because count<4 misses green, but the hint ('It's been a bit quiet') is misleading for an actively-started convo. Consider a 4th state 'starting' or relax green to count>=2 within 12h."},
+      {"endpoint": "POST /api/chat/{match_id}/reignite", "issue": "Endpoint returns the LLM-extracted JSON without VALIDATING it actually has exactly 3 topics. If LLM returns 2 or 5 it would pass through unchecked. Only the except path guarantees 3."},
+      {"endpoint": "GET /api/match/{match_id}/anniversary", "issue": "Milestone only fires on EXACT day 7/30/90 (`days == 7`). If a user opens the app on day 8 they miss it. Use `>=` with a 'shown' flag, OR widen to day-7..9 window. Currently a user who skips a day misses the milestone forever."},
+      {"endpoint": "GET /api/transparency/{target_user_id}", "issue": "authenticity_score MAX is 30+20+20+10+20 = 100, not 110 as the test spec allows. Spec says 0-110; impl tops at 100. Either bump a tier by +10 or fix the spec."},
+      {"endpoint": "/api/me/pledge", "issue": "Toggling pledge OFF does NOT clear pledge_signed_at — stale timestamp persists in DB even when anti_ghosting_pledge=false. Either `$unset` the timestamp on disable, or keep it but document that pledge_signed_at is 'last time signed' not 'currently signed'."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "passed_tests": [
+    "TestCompleteness: shape (8 checks, percent 0-100) + increments by 10 when interests added",
+    "TestProfileFields: no-auth GET returns 12 growth_goal_options + 20 icebreaker_questions",
+    "TestGrowthGoals: 3 goals persist via /auth/me; 7 goals truncated to first 5",
+    "TestIcebreakers: 2-answer persist; 5 answers with empty middle → max 3, no empty answers in saved",
+    "TestPledge: enable→true + pledge_signed_at set in DB; disable→false",
+    "TestWellness.checkin_invalid_mood: 'ecstatic' → 400",
+    "TestWellness.checkin_good: mood=good, show_support=false",
+    "TestWellness.three_down_streak: 2 inserted + 1 API down → show_support=true, support_message non-empty",
+    "TestWellness.status_shape: wellness_prompt_at=20, daily_limit=30",
+    "TestWellness.take_break: paused_until ≈ +3d; demo1 /discover excludes demo2; /resume unsets",
+    "TestWellness.daily_limit_is_30: swipes_remaining ≤ 30, db.users.daily_swipes_remaining ≤ 30",
+    "TestTransparency.shape: all 6 keys present, badge in [High,Medium,Low,—], authenticity 0-110",
+    "TestTodaysSpark.cached: 2 calls return same pick.id+date; match_reasons present on first",
+    "TestTodaysSpark.why_returns_reasons: 1–5 non-empty reason strings",
+    "TestChatHealthReignite.active_green: 4 msgs <1h → color=green status=active",
+    "TestChatHealthReignite.stale_red: msgs forced to 60h → color=red status=stale",
+    "TestChatHealthReignite.reignite_3_topics: exactly 3 non-empty topic strings",
+    "TestAnniversary: 7d→week, 30d→month, 90d→legend, 12d→milestone=null; matched_at restored",
+    "TestRegression: login demo1, /discover, /matches, AI date-planner 402 premium_required, VIP admin /auth/me"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iteration_6_results.xml"
+  ],
+  "action_items": [
+    "icebreakers endpoint: filter empties BEFORE [:3] truncation, otherwise valid answers are silently dropped.",
+    "anniversary endpoint: switch `days == 7` to `>=` with a once-shown flag so users who skip a day don't miss the milestone permanently.",
+    "todays-spark: include match_reasons on cached responses too (currently only on first compute).",
+    "transparency: spec says 0-110 but max is 100 — either add +10 tier or update spec.",
+    "/me/pledge: $unset pledge_signed_at when disabling, OR rename to last_signed_at.",
+    "reignite: validate LLM JSON has len(topics)==3, else fall back to default."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 2397 lines — even more overdue for a router split (mentioned in iter5 too).",
+    "/options/profile-fields hardcodes options inside server.py — move to a constants/config module so frontend i18n can reference the same source of truth.",
+    "/discover/todays-spark recomputes from scratch on cache miss and uses an in-memory scorer over up to 50 candidates — fine now but won't scale; consider precomputing nightly via cron.",
+    "Wellness `today_checkin` lexical date-string comparison against ISO datetime works only because both sides use UTC-ISO with the same format. Add a comment or convert to a proper datetime range.",
+    "_why_reasons uses set() which can reorder shared items each call — UI may show different order on each fetch; sort the lists.",
+    "/wellness/take-break clamps days to 1..7 silently — return 400 on out-of-range instead, otherwise client-side validation is the only contract.",
+    "compute_transparency runs N+1 mongo queries (one find_one per match for inbound/outbound). For a power user with many matches this is slow; use an aggregation pipeline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new — 26 tests, all green)",
+    "/app/test_reports/pytest/iteration_6_results.xml (new junit xml)"
+  ],
+  "success_rate": {"backend": "100% (26/26)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "demo1@spark.app/password123, demo2@spark.app/password123, deepthimarthi82@gmail.com/Spark2026! (VIP admin), vikaskesiraju@gmail.com/Spark2026! (VIP admin).",
+  "seed_data_creation": "Tests use direct pymongo for state setup/teardown: (1) wellness_checkins for demo1 are wiped before+after streak test; (2) match 0a019632-6f9f-45ab-8fb6-20601b4e60f3's matched_at is mutated to 7/30/90/12 days ago then restored to original in finally; (3) 4 seed messages inserted with id list tracked + deleted in finally; (4) for stale-red test, all existing match messages have created_at overwritten then restored (each row by id) — if a row was deleted mid-test the original timestamp may be lost (low risk); (5) demo2.wellness_paused_until set then unset; (6) demo1.interests temporarily blanked then restored; (7) demo1.todays_spark_user_id/date unset to force fresh compute. All seed data cleaned in finally blocks.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_iteration6.py -v (~8s, no rate-limit waits unlike iter5). All 26 tests are independent and idempotent — each cleans its own seed data. No interference with iter5 tests; can run them in any order. The wellness streak test wipes db.wellness_checkins for demo1 — re-seed if any test relies on demo1's checkin history. /api/auth/me returns user object at root (NOT nested under 'user' key) — keep in mind for future tests. AI date-planner is POST /api/ai/date-planner/{match_id} with body {budget, activity_type, city?}; demo1 (free) → 402 premium_required.",
+  "mocked_apis_status": "Resend email remains MOCKED via placeholder RESEND_API_KEY. /chat/{id}/reignite uses real EMERGENT_LLM_KEY (GPT-4o) — observed real LLM response with 3 topics; fallback path also tested manually and confirmed by code review. No other new mocks introduced in this iteration."
+}

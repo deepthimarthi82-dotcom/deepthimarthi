@@ -125,6 +125,9 @@ class UserProfile(BaseModel):
     dealbreakers: List[str] = []
     interests: List[str] = []
     prompts: List[Dict[str, str]] = []
+    growth_goals: List[str] = []  # max 5
+    icebreaker_answers: List[Dict[str, str]] = []  # [{question, answer}] max 3
+    anti_ghosting_pledge: bool = False
 
 class CompatibilityQuiz(BaseModel):
     communication_style: str
@@ -233,8 +236,9 @@ SUBSCRIPTION_PLANS = {
     },
 }
 
-FREE_DAILY_SWIPES = 20
+FREE_DAILY_SWIPES = 30
 FREE_DAILY_SUPER_LIKES = 1
+WELLNESS_PROMPT_AT = 20  # show a gentle "slow down" prompt at this count
 ADMIN_PREMIUM_EMAILS = {"deepthimarthi82@gmail.com", "vikaskesiraju@gmail.com"}
 
 # ==================== UTILITIES ====================
@@ -645,7 +649,11 @@ async def discover_profiles(user: dict = Depends(get_current_user)):
     # Build query
     query = {
         "id": {"$nin": swiped_ids},
-        "profile_complete": True
+        "profile_complete": True,
+        "$or": [
+            {"wellness_paused_until": {"$exists": False}},
+            {"wellness_paused_until": {"$lt": datetime.now(timezone.utc).isoformat()}}
+        ]
     }
     
     # Map looking_for to gender (women -> woman, men -> man)
@@ -2019,6 +2027,349 @@ async def resolve_flag(flag_id: str, payload: dict, user: dict = Depends(get_cur
         await db.users.update_one({"id": flag["user_id"]}, {"$unset": {"suspended": "", "suspended_reason": ""}})
     await db.security_flags.update_one({"id": flag_id}, {"$set": {"status": "resolved", "resolved_action": action, "resolved_at": datetime.now(timezone.utc).isoformat()}})
     return {"message": "Resolved"}
+
+# ==================== PROFILE COMPLETENESS ====================
+
+def compute_profile_completeness(user: dict) -> dict:
+    checks = [
+        ("photos", len(user.get("photos", [])) >= 3, 20),
+        ("bio", len(user.get("bio") or "") >= 60, 15),
+        ("intentions", bool(user.get("intentions")), 10),
+        ("interests", len(user.get("interests", [])) >= 3, 10),
+        ("personality_quiz", bool(user.get("quiz_complete")), 15),
+        ("growth_goals", len(user.get("growth_goals", [])) >= 3, 10),
+        ("icebreakers", len(user.get("icebreaker_answers", [])) >= 3, 10),
+        ("verified", bool(user.get("video_verified") or user.get("photo_verified")), 10),
+    ]
+    pct = sum(weight for _, ok, weight in checks if ok)
+    missing = [name for name, ok, _ in checks if not ok]
+    return {"percent": pct, "missing": missing, "checks": [{"name": n, "complete": ok, "weight": w} for n, ok, w in checks]}
+
+@api_router.get("/me/completeness")
+async def my_completeness(user: dict = Depends(get_current_user)):
+    return compute_profile_completeness(user)
+
+# ==================== GROWTH GOALS + ICEBREAKERS + PLEDGE ====================
+
+class GrowthGoalsPayload(BaseModel):
+    goals: List[str]
+
+class IcebreakersPayload(BaseModel):
+    answers: List[Dict[str, str]]
+
+GROWTH_GOAL_OPTIONS = [
+    "Travel more", "Start a business", "Get fit", "Learn a language",
+    "Buy a home", "Start a family", "Change careers", "Build wealth",
+    "Run a marathon", "Write a book", "Master a creative skill", "Volunteer regularly"
+]
+
+ICEBREAKER_QUESTIONS = [
+    "Best travel memory?", "Unpopular opinion?", "What's your love language?",
+    "Best date you've ever been on?", "What are you currently obsessed with?",
+    "Most spontaneous thing you've done?", "What's a hidden talent of yours?",
+    "If you could only eat one cuisine forever?", "What show are you bingeing?",
+    "What's a small thing that makes you happy?", "Sunday morning ritual?",
+    "Last book that changed you?", "Karaoke song of choice?",
+    "What's a hill you'd die on?", "Coolest place you've ever lived?",
+    "If you had a free year, you'd...?", "Your most-used emoji?",
+    "Beach person or mountain person?", "What's your unfair superpower?",
+    "Childhood dream job?"
+]
+
+@api_router.get("/options/profile-fields")
+async def get_profile_options():
+    return {"growth_goal_options": GROWTH_GOAL_OPTIONS, "icebreaker_questions": ICEBREAKER_QUESTIONS}
+
+@api_router.put("/me/growth-goals")
+async def save_growth_goals(payload: GrowthGoalsPayload, user: dict = Depends(get_current_user)):
+    goals = payload.goals[:5]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"growth_goals": goals}})
+    return {"growth_goals": goals}
+
+@api_router.put("/me/icebreakers")
+async def save_icebreakers(payload: IcebreakersPayload, user: dict = Depends(get_current_user)):
+    answers = [{"question": a.get("question", ""), "answer": a.get("answer", "")} for a in payload.answers[:3] if a.get("answer", "").strip()]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"icebreaker_answers": answers}})
+    return {"icebreaker_answers": answers}
+
+@api_router.put("/me/pledge")
+async def toggle_pledge(payload: dict, user: dict = Depends(get_current_user)):
+    enabled = bool(payload.get("enabled"))
+    update = {"anti_ghosting_pledge": enabled}
+    if enabled:
+        update["pledge_signed_at"] = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return {"anti_ghosting_pledge": enabled}
+
+# ==================== WELLNESS MODE ====================
+
+class WellnessCheckinPayload(BaseModel):
+    mood: str  # "great", "good", "okay", "down", "frustrated"
+
+class TakeBreakPayload(BaseModel):
+    days: int  # 1-7
+
+@api_router.post("/wellness/checkin")
+async def wellness_checkin(payload: WellnessCheckinPayload, user: dict = Depends(get_current_user)):
+    valid = ["great", "good", "okay", "down", "frustrated"]
+    if payload.mood not in valid:
+        raise HTTPException(status_code=400, detail=f"Mood must be one of {valid}")
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "mood": payload.mood,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.wellness_checkins.insert_one(record)
+    
+    # Check if 3 negative moods in a row → show support
+    last_three = await db.wellness_checkins.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).limit(3).to_list(3)
+    show_support = len(last_three) >= 3 and all(c["mood"] in ("down", "frustrated") for c in last_three)
+    return {
+        "mood": payload.mood,
+        "show_support": show_support,
+        "support_message": "Dating can be tough. Try these: take a break, refresh your photos, and remember — your worth isn't measured by swipes." if show_support else None
+    }
+
+@api_router.get("/wellness/status")
+async def wellness_status(user: dict = Depends(get_current_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_checkin = await db.wellness_checkins.find_one({"user_id": user["id"], "created_at": {"$gte": today}}, {"_id": 0})
+    paused_until = user.get("wellness_paused_until")
+    is_paused = bool(paused_until and paused_until > datetime.now(timezone.utc).isoformat())
+    return {
+        "today_checkin": today_checkin,
+        "paused_until": paused_until if is_paused else None,
+        "is_paused": is_paused,
+        "wellness_prompt_at": WELLNESS_PROMPT_AT,
+        "daily_limit": FREE_DAILY_SWIPES if user.get("subscription") == "free" else None
+    }
+
+@api_router.post("/wellness/take-break")
+async def take_break(payload: TakeBreakPayload, user: dict = Depends(get_current_user)):
+    days = max(1, min(7, payload.days))
+    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"wellness_paused_until": until}})
+    return {"paused_until": until, "message": f"Account paused for {days} days. Your matches are preserved."}
+
+@api_router.post("/wellness/resume")
+async def resume_from_break(user: dict = Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$unset": {"wellness_paused_until": ""}})
+    return {"message": "Welcome back!"}
+
+# ==================== TRANSPARENCY SCORE ====================
+
+def human_last_active(iso: Optional[str]) -> str:
+    if not iso:
+        return "Long ago"
+    try:
+        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - ts
+        if delta.days == 0:
+            return "Today"
+        if delta.days == 1:
+            return "Yesterday"
+        if delta.days < 7:
+            return "This week"
+        if delta.days < 30:
+            return "This month"
+        return f"{delta.days // 30} months ago"
+    except Exception:
+        return "Unknown"
+
+async def compute_transparency(uid: str, profile: dict) -> dict:
+    # Response rate: % of inbound matches where user has replied
+    matches = await db.matches.find({"$or": [{"user1_id": uid}, {"user2_id": uid}]}).to_list(1000)
+    matches_replied = 0
+    matches_with_inbound = 0
+    for m in matches:
+        inbound = await db.messages.find_one({"match_id": m["id"], "sender_id": {"$ne": uid}})
+        if inbound:
+            matches_with_inbound += 1
+            outbound = await db.messages.find_one({"match_id": m["id"], "sender_id": uid})
+            if outbound:
+                matches_replied += 1
+    response_rate = round(100 * matches_replied / matches_with_inbound) if matches_with_inbound else None
+    rr_badge = "High" if (response_rate or 0) >= 75 else "Medium" if (response_rate or 0) >= 40 else "Low" if response_rate is not None else "—"
+
+    # Authenticity: photo_verified + bio + quiz + days_on_app
+    authenticity = 0
+    if profile.get("video_verified") or profile.get("photo_verified"): authenticity += 30
+    if len(profile.get("bio") or "") >= 60: authenticity += 20
+    if profile.get("quiz_complete"): authenticity += 20
+    if profile.get("anti_ghosting_pledge"): authenticity += 10
+    try:
+        created = datetime.fromisoformat((profile.get("created_at") or "").replace("Z", "+00:00"))
+        days_on_app = max(0, (datetime.now(timezone.utc) - created).days)
+        if days_on_app >= 30: authenticity += 20
+        elif days_on_app >= 7: authenticity += 10
+    except Exception:
+        days_on_app = 0
+
+    # Genuine profile badge: active 30d + responsive
+    genuine = days_on_app >= 30 and (response_rate or 0) >= 50
+
+    # Match→date ratio (only computed for premium peers asking)
+    return {
+        "last_active_human": human_last_active(profile.get("last_active")),
+        "response_rate": response_rate,
+        "response_rate_badge": rr_badge,
+        "authenticity_score": authenticity,
+        "genuine_profile": genuine,
+        "days_on_app": days_on_app
+    }
+
+@api_router.get("/transparency/{target_user_id}")
+async def transparency(target_user_id: str, user: dict = Depends(get_current_user)):
+    profile = await db.users.find_one({"id": target_user_id}, {"_id": 0, "password": 0, "email": 0})
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
+    return await compute_transparency(target_user_id, profile)
+
+# ==================== DAILY MATCH HIGHLIGHT ====================
+
+@api_router.get("/discover/todays-spark")
+async def todays_spark(user: dict = Depends(get_current_user)):
+    """The best single compat match for today, valid 24h."""
+    # Cache today's pick on user record
+    today = datetime.now(timezone.utc).date().isoformat()
+    if user.get("todays_spark_date") == today and user.get("todays_spark_user_id"):
+        pick = await db.users.find_one({"id": user["todays_spark_user_id"]}, {"_id": 0, "password": 0, "email": 0})
+        if pick:
+            return {"pick": pick, "date": today}
+    
+    # Compute: top profile from discover query, ranked by compatibility
+    swiped = await db.swipes.find({"swiper_id": user["id"]}).to_list(10000)
+    swiped_ids = [s["swiped_id"] for s in swiped] + [user["id"]] + user.get("blocked_users", [])
+    looking_for = user.get("looking_for", "everyone")
+    q = {"id": {"$nin": swiped_ids}, "profile_complete": True}
+    if looking_for == "women": q["gender"] = "woman"
+    elif looking_for == "men": q["gender"] = "man"
+    elif looking_for != "everyone": q["gender"] = looking_for
+    candidates = await db.users.find(q, {"_id": 0, "password": 0, "email": 0}).limit(50).to_list(50)
+    if not candidates:
+        return {"pick": None, "date": today}
+    
+    def score(c):
+        s = 0
+        # interests overlap
+        my_int = set(user.get("interests", []))
+        s += 10 * len(my_int & set(c.get("interests", [])))
+        # growth goals overlap (Growth Match weighting)
+        my_g = set(user.get("growth_goals", []))
+        their_g = set(c.get("growth_goals", []))
+        shared = len(my_g & their_g)
+        s += 15 * shared
+        if shared >= 3: s += 30  # big boost
+        # languages overlap
+        s += 5 * len(set(user.get("languages", [])) & set(c.get("languages", [])))
+        # same intentions
+        if user.get("intentions") and c.get("intentions") == user.get("intentions"): s += 20
+        # photos + bio quality boost
+        if (c.get("video_verified") or c.get("photo_verified")): s += 10
+        if c.get("anti_ghosting_pledge"): s += 5
+        return s
+    
+    candidates.sort(key=score, reverse=True)
+    pick = candidates[0]
+    await db.users.update_one({"id": user["id"]}, {"$set": {"todays_spark_user_id": pick["id"], "todays_spark_date": today}})
+    return {"pick": pick, "date": today, "match_reasons": _why_reasons(user, pick)}
+
+# ==================== WHY DID I SEE THIS MATCH? ====================
+
+def _why_reasons(me: dict, them: dict) -> List[str]:
+    reasons = []
+    shared_int = set(me.get("interests", [])) & set(them.get("interests", []))
+    if shared_int: reasons.append(f"You both love: {', '.join(list(shared_int)[:3])}")
+    shared_g = set(me.get("growth_goals", [])) & set(them.get("growth_goals", []))
+    if shared_g: reasons.append(f"Shared 2-year goals: {', '.join(list(shared_g)[:3])}")
+    shared_lang = set(me.get("languages", [])) & set(them.get("languages", []))
+    if shared_lang: reasons.append(f"Both speak: {', '.join(list(shared_lang)[:3])}")
+    if me.get("intentions") and me.get("intentions") == them.get("intentions"):
+        reasons.append(f"Same dating intention: {me.get('intentions')}")
+    if them.get("anti_ghosting_pledge"): reasons.append("They signed the Anti-Ghosting Pledge")
+    if them.get("video_verified") or them.get("photo_verified"): reasons.append("Their photos are verified")
+    if not reasons: reasons.append("They match your basic preferences. Complete your profile to get smarter matches.")
+    return reasons[:5]
+
+@api_router.get("/discover/why/{target_user_id}")
+async def why_this_match(target_user_id: str, user: dict = Depends(get_current_user)):
+    them = await db.users.find_one({"id": target_user_id}, {"_id": 0, "password": 0, "email": 0})
+    if not them:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"reasons": _why_reasons(user, them)}
+
+# ==================== CONVERSATION HEALTH ====================
+
+async def _conversation_health(match_id: str) -> dict:
+    last = await db.messages.find_one({"match_id": match_id}, {"_id": 0}, sort=[("created_at", -1)])
+    if not last:
+        return {"status": "new", "color": "yellow", "hint": "Send the first message to break the ice!"}
+    last_ts = datetime.fromisoformat(last["created_at"].replace("Z", "+00:00"))
+    if last_ts.tzinfo is None:
+        last_ts = last_ts.replace(tzinfo=timezone.utc)
+    hours = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
+    count = await db.messages.count_documents({"match_id": match_id})
+    if hours < 12 and count >= 4:
+        return {"status": "active", "color": "green", "hint": "Conversation is flowing 🟢"}
+    if hours < 48:
+        return {"status": "slowing", "color": "yellow", "hint": "It's been a bit quiet. Try a fresh question."}
+    return {"status": "stale", "color": "red", "hint": "Stale for 48h+ — time to reignite!"}
+
+@api_router.get("/chat/{match_id}/health")
+async def chat_health(match_id: str, user: dict = Depends(get_current_user)):
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    return await _conversation_health(match_id)
+
+@api_router.post("/chat/{match_id}/reignite")
+async def reignite_chat(match_id: str, user: dict = Depends(get_current_user)):
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    other_id = match["user2_id"] if match["user1_id"] == user["id"] else match["user1_id"]
+    other = await db.users.find_one({"id": other_id}, {"_id": 0, "password": 0, "email": 0})
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"reignite-{match_id}-{datetime.now(timezone.utc).timestamp()}",
+            system_message="""Give 3 fresh conversation restarters tailored to BOTH profiles. Each restarter is 1 sentence, playful, never cliché. Respond ONLY with raw JSON: {"topics": ["...", "...", "..."]}"""
+        ).with_model("openai", "gpt-4o")
+        msg = f"User A interests: {user.get('interests',[])}; intentions: {user.get('intentions')}; growth_goals: {user.get('growth_goals',[])}\nUser B interests: {other.get('interests',[])}; intentions: {other.get('intentions')}; growth_goals: {other.get('growth_goals',[])}"
+        response = await chat.send_message(UserMessage(text=msg))
+        return extract_json(response)
+    except Exception as e:
+        logger.error(f"Reignite error: {e}")
+        return {"topics": [
+            "What's something you'd do this weekend if every restaurant was closed?",
+            "What podcast or playlist has been on rotation lately?",
+            "If you could time-travel to one decade, which one and why?"
+        ]}
+
+# ==================== MATCH ANNIVERSARY ====================
+
+@api_router.get("/match/{match_id}/anniversary")
+async def match_anniversary(match_id: str, user: dict = Depends(get_current_user)):
+    match = await db.matches.find_one({"id": match_id})
+    if not match or user["id"] not in [match["user1_id"], match["user2_id"]]:
+        raise HTTPException(status_code=403, detail="Not your match")
+    created = datetime.fromisoformat(match["matched_at"].replace("Z", "+00:00")) if match.get("matched_at") else None
+    if not created:
+        return {"days": 0, "milestone": None}
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    days = (datetime.now(timezone.utc) - created).days
+    milestone = None
+    if days == 7:
+        milestone = {"label": "1 week!", "message": "You matched 7 days ago — have you met yet? 🔥", "tier": "week"}
+    elif days == 30:
+        milestone = {"label": "30 days", "message": "Still sparking? 🎉", "tier": "month"}
+    elif days == 90:
+        milestone = {"label": "Spark Legend", "message": "90 days strong — you're a Spark Legend ⚡", "tier": "legend"}
+    return {"days": days, "milestone": milestone}
 
 # ==================== ROOT ====================
 
