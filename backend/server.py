@@ -2088,17 +2088,19 @@ async def save_growth_goals(payload: GrowthGoalsPayload, user: dict = Depends(ge
 
 @api_router.put("/me/icebreakers")
 async def save_icebreakers(payload: IcebreakersPayload, user: dict = Depends(get_current_user)):
-    answers = [{"question": a.get("question", ""), "answer": a.get("answer", "")} for a in payload.answers[:3] if a.get("answer", "").strip()]
+    # Filter empty answers FIRST, then cap at 3
+    valid = [{"question": a.get("question", ""), "answer": a.get("answer", "")} for a in payload.answers if a.get("answer", "").strip()]
+    answers = valid[:3]
     await db.users.update_one({"id": user["id"]}, {"$set": {"icebreaker_answers": answers}})
     return {"icebreaker_answers": answers}
 
 @api_router.put("/me/pledge")
 async def toggle_pledge(payload: dict, user: dict = Depends(get_current_user)):
     enabled = bool(payload.get("enabled"))
-    update = {"anti_ghosting_pledge": enabled}
     if enabled:
-        update["pledge_signed_at"] = datetime.now(timezone.utc).isoformat()
-    await db.users.update_one({"id": user["id"]}, {"$set": update})
+        await db.users.update_one({"id": user["id"]}, {"$set": {"anti_ghosting_pledge": True, "pledge_signed_at": datetime.now(timezone.utc).isoformat()}})
+    else:
+        await db.users.update_one({"id": user["id"]}, {"$set": {"anti_ghosting_pledge": False}, "$unset": {"pledge_signed_at": ""}})
     return {"anti_ghosting_pledge": enabled}
 
 # ==================== WELLNESS MODE ====================
@@ -2147,10 +2149,11 @@ async def wellness_status(user: dict = Depends(get_current_user)):
 
 @api_router.post("/wellness/take-break")
 async def take_break(payload: TakeBreakPayload, user: dict = Depends(get_current_user)):
-    days = max(1, min(7, payload.days))
-    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    if payload.days < 1 or payload.days > 7:
+        raise HTTPException(status_code=400, detail="Break must be between 1 and 7 days")
+    until = (datetime.now(timezone.utc) + timedelta(days=payload.days)).isoformat()
     await db.users.update_one({"id": user["id"]}, {"$set": {"wellness_paused_until": until}})
-    return {"paused_until": until, "message": f"Account paused for {days} days. Your matches are preserved."}
+    return {"paused_until": until, "message": f"Account paused for {payload.days} days. Your matches are preserved."}
 
 @api_router.post("/wellness/resume")
 async def resume_from_break(user: dict = Depends(get_current_user)):
@@ -2363,11 +2366,11 @@ async def match_anniversary(match_id: str, user: dict = Depends(get_current_user
         created = created.replace(tzinfo=timezone.utc)
     days = (datetime.now(timezone.utc) - created).days
     milestone = None
-    if days == 7:
-        milestone = {"label": "1 week!", "message": "You matched 7 days ago — have you met yet? 🔥", "tier": "week"}
-    elif days == 30:
+    if 7 <= days <= 9:
+        milestone = {"label": "1 week!", "message": "You matched a week ago — have you met yet? 🔥", "tier": "week"}
+    elif 30 <= days <= 32:
         milestone = {"label": "30 days", "message": "Still sparking? 🎉", "tier": "month"}
-    elif days == 90:
+    elif 90 <= days <= 92:
         milestone = {"label": "Spark Legend", "message": "90 days strong — you're a Spark Legend ⚡", "tier": "legend"}
     return {"days": days, "milestone": milestone}
 
